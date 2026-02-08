@@ -880,6 +880,7 @@ interface CommonHeaderProps {
     onNavigate: (page: PageType) => void;
     rightControls?: React.ReactNode;
     isDarkMode: boolean;
+    handleLogout: () => void;
     toggleTheme: () => void;
     lang: string;
     toggleLang: () => void;
@@ -890,28 +891,7 @@ interface CommonHeaderProps {
     authLoading: boolean;
 }
 
-const CommonHeader: React.FC<CommonHeaderProps> = ({ title, current, onNavigate, rightControls, isDarkMode, toggleTheme, lang, toggleLang, onMenuToggle, isMenuOpen, t, user, authLoading }) => {
-  const [showUserMenu, setShowUserMenu] = useState(false);
-  const userMenuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
-        setShowUserMenu(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  const handleLogout = async () => {
-    try {
-      await signOut();
-      setShowUserMenu(false);
-    } catch (error) {
-      console.error('Logout failed:', error);
-    }
-  };
+const CommonHeader: React.FC<CommonHeaderProps> = ({ title, current, onNavigate, rightControls, isDarkMode, toggleTheme, lang, toggleLang, onMenuToggle, isMenuOpen, t, user, authLoading, handleLogout }) => {
 
   return (
     <header className="h-14 border-b border-white/5 flex items-center justify-between px-4 lg:px-6 bg-[#111]/90 backdrop-blur-md z-[60] relative transition-colors duration-300">
@@ -1166,6 +1146,14 @@ export const App: React.FC = () => {
             setShowApiKeyModal(false);
         } else {
             alert('API 키 저장에 실패했습니다. 다시 시도해주세요.');
+        }
+    };
+
+    const handleLogout = async () => {
+        try {
+            await signOut();
+        } catch (error) {
+            console.error('Logout failed:', error);
         }
     };
 
@@ -1691,6 +1679,7 @@ export const App: React.FC = () => {
                     t={t}
                     user={user}
                     authLoading={authLoading}
+                    handleLogout={handleLogout}
                 />
                 
                 <main className="flex-1 overflow-hidden relative flex flex-col md:flex-row">
