@@ -4,7 +4,7 @@ import { User } from 'firebase/auth';
 import { Category, ClothingItem, AppState, AspectRatio, HistoryItem, StylePreset, ImageSize, FitType, PoseType, BackgroundType, ClothingLength, GenderType, BatchItem } from './types';
 import { generateFittingImage, generateEditedImage, generateInpainting } from './services/geminiService';
 import { hasApiKey, saveApiKey, getMaskedApiKey, deleteApiKey } from './services/apiKeyStorage';
-import { onAuthStateChange } from './services/authService';
+import { onAuthStateChange, signInWithGoogle, signOut } from './services/authService';
 import DropZone from './components/DropZone';
 import ApiKeyModal from './components/ApiKeyModal';
 
@@ -906,7 +906,6 @@ const CommonHeader: React.FC<CommonHeaderProps> = ({ title, current, onNavigate,
 
   const handleLogout = async () => {
     try {
-      const { signOut } = await import('./services/authService');
       await signOut();
       setShowUserMenu(false);
     } catch (error) {
@@ -985,11 +984,14 @@ const CommonHeader: React.FC<CommonHeaderProps> = ({ title, current, onNavigate,
           ) : (
             <button
               onClick={async () => {
+                console.log('Login button clicked!');
                 try {
-                  const { signInWithGoogle } = await import('./services/authService');
+                  console.log('Calling signInWithGoogle...');
                   await signInWithGoogle();
-                } catch (error) {
+                  console.log('Login successful!');
+                } catch (error: any) {
                   console.error('Login failed:', error);
+                  alert(error.message || '로그인에 실패했습니다.');
                 }
               }}
               className="bg-white text-black px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider hover:bg-indigo-50 transition-colors flex items-center gap-2"
@@ -1035,8 +1037,22 @@ const LandingPage: React.FC<{ onNavigate: (page: PageType) => void; t: any }> = 
                  </span>
              </div>
              <div className="absolute right-0 flex gap-3">
-                 <button className="text-sm font-medium text-slate-500 hover:text-white px-3 py-2 transition-colors cursor-default opacity-50">{t.login}</button>
-                 <button className="bg-white text-black px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider hover:bg-indigo-50 transition-colors cursor-default">{t.signup}</button>
+                 <button
+                   onClick={async () => {
+                     console.log('Landing Login button clicked!');
+                     try {
+                       await signInWithGoogle();
+                       console.log('Login successful!');
+                     } catch (error: any) {
+                       console.error('Login failed:', error);
+                       alert(error.message || '로그인에 실패했습니다.');
+                     }
+                   }}
+                   className="bg-white text-black px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider hover:bg-indigo-50 transition-colors cursor-pointer flex items-center gap-2"
+                 >
+                   <i className="fab fa-google"></i>
+                   <span>로그인</span>
+                 </button>
              </div>
           </div>
         </div>
