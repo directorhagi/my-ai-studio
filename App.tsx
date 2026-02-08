@@ -940,47 +940,12 @@ const CommonHeader: React.FC<CommonHeaderProps> = ({ title, current, onNavigate,
               <i className="fas fa-spinner fa-spin text-slate-500 text-sm"></i>
             </div>
           ) : user ? (
-            <div className="relative" ref={userMenuRef}>
-              <button
-                onClick={() => setShowUserMenu(!showUserMenu)}
-                className="flex items-center gap-2 hover:bg-white/10 rounded-full px-2 py-1 transition-colors"
-              >
-                {user.photoURL ? (
-                  <img src={user.photoURL} alt={user.displayName || 'User'} className="w-8 h-8 rounded-full border border-white/20" />
-                ) : (
-                  <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white text-xs font-bold">
-                    {user.email?.charAt(0).toUpperCase()}
-                  </div>
-                )}
-              </button>
-
-              {showUserMenu && (
-                <div className="absolute right-0 top-full mt-2 w-64 bg-[#111] border border-white/10 rounded-xl shadow-2xl animate-in fade-in slide-in-from-top-2 duration-200 overflow-hidden">
-                  <div className="p-4 border-b border-white/10 bg-white/5">
-                    <div className="flex items-center gap-3">
-                      {user.photoURL ? (
-                        <img src={user.photoURL} alt={user.displayName || 'User'} className="w-10 h-10 rounded-full border border-white/20" />
-                      ) : (
-                        <div className="w-10 h-10 rounded-full bg-indigo-600 flex items-center justify-center text-white font-bold">
-                          {user.email?.charAt(0).toUpperCase()}
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-bold text-white truncate">{user.displayName || 'User'}</p>
-                        <p className="text-xs text-slate-400 truncate">{user.email}</p>
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    onClick={handleLogout}
-                    className="w-full px-4 py-3 text-left text-sm text-slate-300 hover:bg-white/5 transition-colors flex items-center gap-2"
-                  >
-                    <i className="fas fa-sign-out-alt"></i>
-                    <span>로그아웃</span>
-                  </button>
-                </div>
-              )}
-            </div>
+            <button
+              onClick={handleLogout}
+              className="bg-white text-black px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider hover:bg-indigo-50 transition-colors"
+            >
+              로그아웃
+            </button>
           ) : (
             <button
               onClick={async () => {
@@ -994,10 +959,9 @@ const CommonHeader: React.FC<CommonHeaderProps> = ({ title, current, onNavigate,
                   alert(error.message || '로그인에 실패했습니다.');
                 }
               }}
-              className="bg-white text-black px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider hover:bg-indigo-50 transition-colors flex items-center gap-2"
+              className="bg-white text-black px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider hover:bg-indigo-50 transition-colors"
             >
-              <i className="fab fa-google"></i>
-              <span>로그인</span>
+              로그인
             </button>
           )}
        </div>
@@ -1005,7 +969,7 @@ const CommonHeader: React.FC<CommonHeaderProps> = ({ title, current, onNavigate,
   );
 };
 
-const LandingPage: React.FC<{ onNavigate: (page: PageType) => void; t: any }> = ({ onNavigate, t }) => {
+const LandingPage: React.FC<{ onNavigate: (page: PageType) => void; t: any; user: User | null; handleLogout: () => void }> = ({ onNavigate, t, user, handleLogout }) => {
     // ... logic same ...
     const [showHistory, setShowHistory] = useState(false);
     const [showChangelog, setShowChangelog] = useState(false);
@@ -1037,22 +1001,30 @@ const LandingPage: React.FC<{ onNavigate: (page: PageType) => void; t: any }> = 
                  </span>
              </div>
              <div className="absolute right-0 flex gap-3">
-                 <button
-                   onClick={async () => {
-                     console.log('Landing Login button clicked!');
-                     try {
-                       await signInWithGoogle();
-                       console.log('Login successful!');
-                     } catch (error: any) {
-                       console.error('Login failed:', error);
-                       alert(error.message || '로그인에 실패했습니다.');
-                     }
-                   }}
-                   className="bg-white text-black px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider hover:bg-indigo-50 transition-colors cursor-pointer flex items-center gap-2"
-                 >
-                   <i className="fab fa-google"></i>
-                   <span>로그인</span>
-                 </button>
+                 {user ? (
+                   <button
+                     onClick={handleLogout}
+                     className="bg-white text-black px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider hover:bg-indigo-50 transition-colors cursor-pointer"
+                   >
+                     로그아웃
+                   </button>
+                 ) : (
+                   <button
+                     onClick={async () => {
+                       console.log('Landing Login button clicked!');
+                       try {
+                         await signInWithGoogle();
+                         console.log('Login successful!');
+                       } catch (error: any) {
+                         console.error('Login failed:', error);
+                         alert(error.message || '로그인에 실패했습니다.');
+                       }
+                     }}
+                     className="bg-white text-black px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider hover:bg-indigo-50 transition-colors cursor-pointer"
+                   >
+                     로그인
+                   </button>
+                 )}
              </div>
           </div>
         </div>
@@ -1692,7 +1664,7 @@ export const App: React.FC = () => {
         }
     };
 
-    if (currentPage === 'LANDING') return <LandingPage onNavigate={setCurrentPage} t={t} />;
+    if (currentPage === 'LANDING') return <LandingPage onNavigate={setCurrentPage} t={t} user={user} handleLogout={handleLogout} />;
 
     const dotCanvasStyle = {
         backgroundImage: 'radial-gradient(circle, #ffffff15 1px, transparent 1px)',
