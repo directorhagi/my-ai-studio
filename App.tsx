@@ -5,6 +5,7 @@ import { Category, ClothingItem, AppState, AspectRatio, HistoryItem, StylePreset
 import { generateFittingImage, generateEditedImage, generateInpainting } from './services/geminiService';
 import { hasApiKey, saveApiKey, getMaskedApiKey, deleteApiKey } from './services/apiKeyStorage';
 import { onAuthStateChange, signInWithGoogle, signOut } from './services/authService';
+import { uploadImageToDrive, listImagesFromDrive, downloadImageFromDrive, deleteImageFromDrive } from './services/driveService';
 import DropZone from './components/DropZone';
 import ApiKeyModal from './components/ApiKeyModal';
 
@@ -1098,6 +1099,11 @@ export const App: React.FC = () => {
     const [user, setUser] = useState<User | null>(null);
     const [authLoading, setAuthLoading] = useState(true);
 
+    // Google Drive state
+    const [libraryTab, setLibraryTab] = useState<'local' | 'drive'>('local');
+    const [driveImages, setDriveImages] = useState<any[]>([]);
+    const [loadingDrive, setLoadingDrive] = useState(false);
+
     const [sidebarWidth, setSidebarWidth] = useState(340);
     const [isResizing, setIsResizing] = useState(false);
     
@@ -1156,6 +1162,99 @@ export const App: React.FC = () => {
             console.error('Logout failed:', error);
         }
     };
+
+    // Google Drive functions
+    const loadDriveImages = async () => {
+        if (!user) {
+            alert('Google 로그인이 필요합니다.');
+            return;
+        }
+
+        setLoadingDrive(true);
+        try {
+            const images = await listImagesFromDrive();
+            setDriveImages(images);
+        } catch (error: any) {
+            console.error('Failed to load Drive images:', error);
+            alert(error.message || 'Drive 이미지를 불러오는데 실패했습니다.');
+        } finally {
+            setLoadingDrive(false);
+        }
+    };
+
+    const saveToDrive = async (imageUrl: string, fileName: string, metadata?: any) => {
+        if (!user) {
+            alert('Google 로그인이 필요합니다.');
+            return;
+        }
+
+        try {
+            // Convert image URL to blob
+            const response = await fetch(imageUrl);
+            const blob = await response.blob();
+
+            // Upload to Drive
+            await uploadImageToDrive(blob, fileName, metadata);
+            alert('Drive에 저장되었습니다!');
+
+            // Reload drive images if on drive tab
+            if (libraryTab === 'drive') {
+                await loadDriveImages();
+            }
+        } catch (error: any) {
+            console.error('Failed to save to Drive:', error);
+            alert(error.message || 'Drive 저장에 실패했습니다.');
+        }
+    };
+
+    const deleteFromDrive = async (fileId: string) => {
+        if (!user) {
+            return;
+        }
+
+        if (!confirm('Drive에서 이미지를 삭제하시겠습니까?')) {
+            return;
+        }
+
+        try {
+            await deleteImageFromDrive(fileId);
+            alert('삭제되었습니다.');
+            await loadDriveImages();
+        } catch (error: any) {
+            console.error('Failed to delete from Drive:', error);
+            alert(error.message || 'Drive 삭제에 실패했습니다.');
+        }
+    };
+
+    const downloadFromDrive = async (fileId: string, fileName: string) => {
+        if (!user) {
+            return;
+        }
+
+        try {
+            const blob = await downloadImageFromDrive(fileId);
+            const url = URL.createObjectURL(blob);
+
+            // Download file
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        } catch (error: any) {
+            console.error('Failed to download from Drive:', error);
+            alert(error.message || 'Drive 다운로드에 실패했습니다.');
+        }
+    };
+
+    // Load drive images when switching to drive tab
+    useEffect(() => {
+        if (libraryTab === 'drive' && user && currentPage === 'LIBRARY') {
+            loadDriveImages();
+        }
+    }, [libraryTab, user, currentPage]);
 
     const [studioState, setStudioState] = useState<AppState>({
         currentView: 'FRONT',
@@ -1986,25 +2085,117 @@ export const App: React.FC = () => {
                     )}
 
                     {currentPage === 'LIBRARY' && (
-                        <div className="w-full h-full overflow-y-auto custom-scrollbar p-0 pt-20 pb-10">
-                            <div className="flex flex-wrap content-start">
-                                {history.map(item => (
-                                    <div key={item.id} onClick={() => setDetailItem(item)} className="relative group overflow-hidden bg-black/20 border border-white/5 shadow-lg hover:border-indigo-500/50 transition-all cursor-pointer w-1/2 md:w-1/4 aspect-[3/4]">
-                                        <img src={item.url} className="w-full h-full object-cover" loading="lazy" />
-                                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-3">
-                                            <span className="text-[10px] text-white font-bold uppercase tracking-wider mb-1">{item.type}</span>
-                                            <span className="text-[8px] text-slate-400 font-mono">{new Date(item.date).toLocaleDateString()}</span>
-                                        </div>
-                                        <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button onClick={(e) => { e.stopPropagation(); toggleLike(item.id); }} className={`w-6 h-6 rounded-full flex items-center justify-center backdrop-blur-md transition-all text-[10px] ${item.liked ? 'bg-pink-600 text-white' : 'bg-black/50 text-white/50 hover:text-white hover:bg-black/70'}`}><i className="fas fa-heart"></i></button>
-                                            <button onClick={(e) => handleDownload(e, item.url)} className="w-6 h-6 rounded-full flex items-center justify-center backdrop-blur-md transition-all text-[10px] bg-black/50 text-white/50 hover:text-white hover:bg-black/70"><i className="fas fa-download"></i></button>
-                                        </div>
-                                    </div>
-                                ))}
+                        <div className="w-full h-full flex flex-col">
+                            {/* Tab Navigation */}
+                            <div className="flex items-center gap-4 px-6 py-4 border-b border-white/5 bg-[#111]/50 backdrop-blur-md">
+                                <button
+                                    onClick={() => setLibraryTab('local')}
+                                    className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+                                        libraryTab === 'local'
+                                            ? 'bg-indigo-600 text-white'
+                                            : 'bg-transparent text-slate-400 hover:text-white'
+                                    }`}
+                                >
+                                    <i className="fas fa-laptop mr-2"></i>
+                                    로컬
+                                </button>
+                                <button
+                                    onClick={() => setLibraryTab('drive')}
+                                    className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
+                                        libraryTab === 'drive'
+                                            ? 'bg-indigo-600 text-white'
+                                            : 'bg-transparent text-slate-400 hover:text-white'
+                                    }`}
+                                    disabled={!user}
+                                >
+                                    <i className="fab fa-google-drive mr-2"></i>
+                                    Google Drive
+                                    {!user && <span className="ml-2 text-[8px]">(로그인 필요)</span>}
+                                </button>
+                                {libraryTab === 'drive' && loadingDrive && (
+                                    <i className="fas fa-spinner fa-spin text-slate-400 ml-2"></i>
+                                )}
                             </div>
-                            {history.length === 0 && (
-                                <div className="h-full flex flex-col items-center justify-center text-slate-500 opacity-50"><i className="fas fa-folder-open text-4xl mb-4"></i><p className="text-sm font-bold uppercase tracking-widest">{t.noFittings}</p></div>
-                            )}
+
+                            {/* Content */}
+                            <div className="flex-1 overflow-y-auto custom-scrollbar p-0 pt-4 pb-10">
+                                {libraryTab === 'local' ? (
+                                    <div className="flex flex-wrap content-start">
+                                        {history.map(item => (
+                                            <div key={item.id} onClick={() => setDetailItem(item)} className="relative group overflow-hidden bg-black/20 border border-white/5 shadow-lg hover:border-indigo-500/50 transition-all cursor-pointer w-1/2 md:w-1/4 aspect-[3/4]">
+                                                <img src={item.url} className="w-full h-full object-cover" loading="lazy" />
+                                                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-3">
+                                                    <span className="text-[10px] text-white font-bold uppercase tracking-wider mb-1">{item.type}</span>
+                                                    <span className="text-[8px] text-slate-400 font-mono">{new Date(item.date).toLocaleDateString()}</span>
+                                                </div>
+                                                <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <button onClick={(e) => { e.stopPropagation(); toggleLike(item.id); }} className={`w-6 h-6 rounded-full flex items-center justify-center backdrop-blur-md transition-all text-[10px] ${item.liked ? 'bg-pink-600 text-white' : 'bg-black/50 text-white/50 hover:text-white hover:bg-black/70'}`}><i className="fas fa-heart"></i></button>
+                                                    {user && (
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                saveToDrive(item.url, `${item.type}_${item.date}.png`, { prompt: item.type });
+                                                            }}
+                                                            className="w-6 h-6 rounded-full flex items-center justify-center backdrop-blur-md transition-all text-[10px] bg-black/50 text-white/50 hover:text-white hover:bg-indigo-600"
+                                                            title="Drive에 저장"
+                                                        >
+                                                            <i className="fab fa-google-drive"></i>
+                                                        </button>
+                                                    )}
+                                                    <button onClick={(e) => handleDownload(e, item.url)} className="w-6 h-6 rounded-full flex items-center justify-center backdrop-blur-md transition-all text-[10px] bg-black/50 text-white/50 hover:text-white hover:bg-black/70"><i className="fas fa-download"></i></button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                        {history.length === 0 && (
+                                            <div className="w-full h-96 flex flex-col items-center justify-center text-slate-500 opacity-50">
+                                                <i className="fas fa-folder-open text-4xl mb-4"></i>
+                                                <p className="text-sm font-bold uppercase tracking-widest">{t.noFittings}</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div className="flex flex-wrap content-start">
+                                        {driveImages.map(image => (
+                                            <div key={image.id} className="relative group overflow-hidden bg-black/20 border border-white/5 shadow-lg hover:border-indigo-500/50 transition-all cursor-pointer w-1/2 md:w-1/4 aspect-[3/4]">
+                                                <img src={`https://drive.google.com/thumbnail?id=${image.id}&sz=w500`} className="w-full h-full object-cover" loading="lazy" />
+                                                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-3">
+                                                    <span className="text-[10px] text-white font-bold uppercase tracking-wider mb-1 truncate">{image.name}</span>
+                                                    <span className="text-[8px] text-slate-400 font-mono">{new Date(image.createdTime).toLocaleDateString()}</span>
+                                                </div>
+                                                <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            downloadFromDrive(image.id, image.name);
+                                                        }}
+                                                        className="w-6 h-6 rounded-full flex items-center justify-center backdrop-blur-md transition-all text-[10px] bg-black/50 text-white/50 hover:text-white hover:bg-black/70"
+                                                        title="다운로드"
+                                                    >
+                                                        <i className="fas fa-download"></i>
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            deleteFromDrive(image.id);
+                                                        }}
+                                                        className="w-6 h-6 rounded-full flex items-center justify-center backdrop-blur-md transition-all text-[10px] bg-black/50 text-white/50 hover:text-white hover:bg-red-600"
+                                                        title="삭제"
+                                                    >
+                                                        <i className="fas fa-trash"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                        {driveImages.length === 0 && !loadingDrive && (
+                                            <div className="w-full h-96 flex flex-col items-center justify-center text-slate-500 opacity-50">
+                                                <i className="fab fa-google-drive text-4xl mb-4"></i>
+                                                <p className="text-sm font-bold uppercase tracking-widest">Drive에 저장된 이미지가 없습니다</p>
+                                                <p className="text-xs mt-2">로컬 탭에서 이미지를 Drive에 저장해보세요</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     )}
                 </main>
