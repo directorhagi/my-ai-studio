@@ -1,6 +1,7 @@
 
 import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
 import { Category, ClothingItem, AspectRatio, StylePreset, ViewType, ImageSize, FitType, PoseType, BackgroundType, GenderType } from "../types";
+import { getApiKey } from "./apiKeyStorage";
 
 // --- Helpers ---
 
@@ -60,24 +61,36 @@ const optimizeImage = (base64Str: string, maxWidth = 1024): Promise<string> => {
 const getGenAI = () => {
   let apiKey = '';
 
-  // 1. Try checking import.meta.env (Vite standard)
+  // 1. PRIORITY: Check localStorage (user's personal API key)
   try {
-    // @ts-ignore
-    if (typeof import.meta !== 'undefined' && import.meta.env) {
-      // @ts-ignore
-      apiKey = import.meta.env.VITE_API_KEY || import.meta.env.API_KEY || '';
+    const storedKey = getApiKey();
+    if (storedKey && storedKey.trim()) {
+      apiKey = storedKey.trim();
     }
-  } catch (e) { }
+  } catch (e) {
+    console.warn('Failed to read API key from localStorage:', e);
+  }
 
-  // 2. Try checking process.env (Node/CRA/Webpack standard)
+  // 2. Fallback: Check import.meta.env (Vite standard)
+  if (!apiKey) {
+    try {
+      // @ts-ignore
+      if (typeof import.meta !== 'undefined' && import.meta.env) {
+        // @ts-ignore
+        apiKey = import.meta.env.VITE_API_KEY || import.meta.env.API_KEY || '';
+      }
+    } catch (e) { }
+  }
+
+  // 3. Fallback: Check process.env (Node/CRA/Webpack standard)
   if (!apiKey) {
     try {
       // @ts-ignore
       if (typeof process !== 'undefined' && process.env) {
         // @ts-ignore
-        apiKey = process.env.VITE_API_KEY || 
-                 process.env.REACT_APP_API_KEY || 
-                 process.env.NEXT_PUBLIC_API_KEY || 
+        apiKey = process.env.VITE_API_KEY ||
+                 process.env.REACT_APP_API_KEY ||
+                 process.env.NEXT_PUBLIC_API_KEY ||
                  process.env.API_KEY || '';
       }
     } catch (e) { }
@@ -86,10 +99,8 @@ const getGenAI = () => {
   // Strict check
   if (!apiKey || apiKey.trim() === '') {
     throw new Error(
-        "⚠️ API Key를 찾을 수 없습니다.\n\n" +
-        "[해결 방법]\n" +
-        "1. Vercel 설정 > Environment Variables에 'VITE_API_KEY'를 추가하세요.\n" +
-        "2. 반드시 'Redeploy'를 해야 적용됩니다."
+        "⚠️ API 키가 설정되지 않았습니다.\n\n" +
+        "앱 설정에서 Gemini API 키를 입력해주세요."
     );
   }
 

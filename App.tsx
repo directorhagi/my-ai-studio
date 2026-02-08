@@ -2,7 +2,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Category, ClothingItem, AppState, AspectRatio, HistoryItem, StylePreset, ImageSize, FitType, PoseType, BackgroundType, ClothingLength, GenderType, BatchItem } from './types';
 import { generateFittingImage, generateEditedImage, generateInpainting } from './services/geminiService';
+import { hasApiKey, saveApiKey, getMaskedApiKey, deleteApiKey } from './services/apiKeyStorage';
 import DropZone from './components/DropZone';
+import ApiKeyModal from './components/ApiKeyModal';
 
 // --- Types for Navigation ---
 type PageType = 'LANDING' | 'STUDIO' | 'EDIT_IMAGE' | 'INPAINTING' | 'LIBRARY';
@@ -1033,6 +1035,7 @@ export const App: React.FC = () => {
     const [history, setHistory] = useState<HistoryItem[]>([]);
     const [detailItem, setDetailItem] = useState<HistoryItem | null>(null);
     const [showZoom, setShowZoom] = useState<string | null>(null);
+    const [showApiKeyModal, setShowApiKeyModal] = useState(false);
 
     const [sidebarWidth, setSidebarWidth] = useState(340);
     const [isResizing, setIsResizing] = useState(false);
@@ -1053,6 +1056,22 @@ export const App: React.FC = () => {
         const root = window.document.documentElement;
         root.classList.add('dark');
     }, []);
+
+    // Check for API key on mount
+    useEffect(() => {
+        if (!hasApiKey()) {
+            setShowApiKeyModal(true);
+        }
+    }, []);
+
+    const handleApiKeySave = (apiKey: string) => {
+        const success = saveApiKey(apiKey);
+        if (success) {
+            setShowApiKeyModal(false);
+        } else {
+            alert('API 키 저장에 실패했습니다. 다시 시도해주세요.');
+        }
+    };
 
     const [studioState, setStudioState] = useState<AppState>({
         currentView: 'FRONT',
@@ -1623,8 +1642,41 @@ export const App: React.FC = () => {
                                                 onChange={e => setStudioState(p => ({ ...p, seed: parseInt(e.target.value) || 0 }))} 
                                                 disabled={studioState.useRandomSeed}
                                                 placeholder={studioState.useRandomSeed ? "Random" : "Enter Seed"}
-                                                className={`w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[10px] text-slate-300 font-mono transition-opacity ${studioState.useRandomSeed ? 'opacity-50' : 'opacity-100'}`} 
+                                                className={`w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[10px] text-slate-300 font-mono transition-opacity ${studioState.useRandomSeed ? 'opacity-50' : 'opacity-100'}`}
                                             />
+                                        </div>
+
+                                        <div className="mb-4 border-b border-white/5 pb-4">
+                                            <div className="flex items-center justify-between mb-2">
+                                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                                                    <i className="fas fa-key"></i>
+                                                    API Key
+                                                </span>
+                                            </div>
+                                            <div className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 mb-2">
+                                                <div className="text-[10px] text-slate-500 font-mono">{getMaskedApiKey()}</div>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                <button
+                                                    onClick={() => setShowApiKeyModal(true)}
+                                                    className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white text-[9px] font-bold py-1.5 px-3 rounded-lg transition-colors flex items-center justify-center gap-1"
+                                                >
+                                                    <i className="fas fa-edit"></i>
+                                                    Change
+                                                </button>
+                                                <button
+                                                    onClick={() => {
+                                                        if (confirm('API 키를 삭제하시겠습니까? 다시 입력해야 앱을 사용할 수 있습니다.')) {
+                                                            deleteApiKey();
+                                                            setShowApiKeyModal(true);
+                                                        }
+                                                    }}
+                                                    className="flex-1 bg-red-600/20 hover:bg-red-600/30 border border-red-600/30 text-red-400 text-[9px] font-bold py-1.5 px-3 rounded-lg transition-colors flex items-center justify-center gap-1"
+                                                >
+                                                    <i className="fas fa-trash"></i>
+                                                    Delete
+                                                </button>
+                                            </div>
                                         </div>
 
                                         {optionCategories.map(cat => <SidebarItemSlot key={cat} catConfig={cat} item={null} selectedValue={studioState[cat === Category.GENDER ? 'selectedGender' : cat === Category.FIT ? 'selectedFit' : cat === Category.BACKGROUND ? 'selectedBackground' : 'selectedPose']} isDarkMode={true} onFileSelect={handleStudioFile} onRemoveItem={handleStudioRemove} onLengthChange={() => {}} onOptionChange={(type, val) => setStudioState(p => ({ ...p, [type === 'fit' ? 'selectedFit' : type === 'pose' ? 'selectedPose' : type === 'bg' ? 'selectedBackground' : 'selectedGender']: val }))} layout="option" t={t} />)}
@@ -1876,6 +1928,7 @@ export const App: React.FC = () => {
                 </main>
                 {detailItem && (<DetailModal item={detailItem} onClose={() => setDetailItem(null)} onUseImage={handleReuse} onEditImage={handleRouteToEdit} onInpaintImage={handleRouteToInpaint} onToggleLike={toggleLike} t={t} />)}
                 {showZoom && <ImageModal src={showZoom} onClose={() => setShowZoom(null)} />}
+                {showApiKeyModal && <ApiKeyModal onSave={handleApiKeySave} isDarkMode={true} />}
             </div>
         </div>
     );
