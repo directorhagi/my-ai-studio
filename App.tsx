@@ -1,8 +1,10 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { User } from 'firebase/auth';
 import { Category, ClothingItem, AppState, AspectRatio, HistoryItem, StylePreset, ImageSize, FitType, PoseType, BackgroundType, ClothingLength, GenderType, BatchItem } from './types';
 import { generateFittingImage, generateEditedImage, generateInpainting } from './services/geminiService';
 import { hasApiKey, saveApiKey, getMaskedApiKey, deleteApiKey } from './services/apiKeyStorage';
+import { onAuthStateChange } from './services/authService';
 import DropZone from './components/DropZone';
 import ApiKeyModal from './components/ApiKeyModal';
 
@@ -884,9 +886,34 @@ interface CommonHeaderProps {
     onMenuToggle?: () => void;
     isMenuOpen?: boolean;
     t: any;
+    user: User | null;
+    authLoading: boolean;
 }
 
-const CommonHeader: React.FC<CommonHeaderProps> = ({ title, current, onNavigate, rightControls, isDarkMode, toggleTheme, lang, toggleLang, onMenuToggle, isMenuOpen, t }) => {
+const CommonHeader: React.FC<CommonHeaderProps> = ({ title, current, onNavigate, rightControls, isDarkMode, toggleTheme, lang, toggleLang, onMenuToggle, isMenuOpen, t, user, authLoading }) => {
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setShowUserMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const handleLogout = async () => {
+    try {
+      const { signOut } = await import('./services/authService');
+      await signOut();
+      setShowUserMenu(false);
+    } catch (error) {
+      console.error('Logout failed:', error);
+    }
+  };
+
   return (
     <header className="h-14 border-b border-white/5 flex items-center justify-between px-4 lg:px-6 bg-[#111]/90 backdrop-blur-md z-[60] relative transition-colors duration-300">
        <div className="flex items-center gap-4">
@@ -907,6 +934,70 @@ const CommonHeader: React.FC<CommonHeaderProps> = ({ title, current, onNavigate,
           {rightControls}
           <div className="w-px h-4 bg-white/10 mx-2"></div>
           <button onClick={toggleLang} className="w-7 h-7 flex items-center justify-center rounded-full hover:bg-white/10 text-slate-500 transition-all text-[10px] font-bold">{lang}</button>
+          <div className="w-px h-4 bg-white/10 mx-2"></div>
+
+          {authLoading ? (
+            <div className="w-8 h-8 flex items-center justify-center">
+              <i className="fas fa-spinner fa-spin text-slate-500 text-sm"></i>
+            </div>
+          ) : user ? (
+            <div className="relative" ref={userMenuRef}>
+              <button
+                onClick={() => setShowUserMenu(!showUserMenu)}
+                className="flex items-center gap-2 hover:bg-white/10 rounded-full px-2 py-1 transition-colors"
+              >
+                {user.photoURL ? (
+                  <img src={user.photoURL} alt={user.displayName || 'User'} className="w-8 h-8 rounded-full border border-white/20" />
+                ) : (
+                  <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center text-white text-xs font-bold">
+                    {user.email?.charAt(0).toUpperCase()}
+                  </div>
+                )}
+              </button>
+
+              {showUserMenu && (
+                <div className="absolute right-0 top-full mt-2 w-64 bg-[#111] border border-white/10 rounded-xl shadow-2xl animate-in fade-in slide-in-from-top-2 duration-200 overflow-hidden">
+                  <div className="p-4 border-b border-white/10 bg-white/5">
+                    <div className="flex items-center gap-3">
+                      {user.photoURL ? (
+                        <img src={user.photoURL} alt={user.displayName || 'User'} className="w-10 h-10 rounded-full border border-white/20" />
+                      ) : (
+                        <div className="w-10 h-10 rounded-full bg-indigo-600 flex items-center justify-center text-white font-bold">
+                          {user.email?.charAt(0).toUpperCase()}
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-white truncate">{user.displayName || 'User'}</p>
+                        <p className="text-xs text-slate-400 truncate">{user.email}</p>
+                      </div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleLogout}
+                    className="w-full px-4 py-3 text-left text-sm text-slate-300 hover:bg-white/5 transition-colors flex items-center gap-2"
+                  >
+                    <i className="fas fa-sign-out-alt"></i>
+                    <span>로그아웃</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <button
+              onClick={async () => {
+                try {
+                  const { signInWithGoogle } = await import('./services/authService');
+                  await signInWithGoogle();
+                } catch (error) {
+                  console.error('Login failed:', error);
+                }
+              }}
+              className="bg-white text-black px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider hover:bg-indigo-50 transition-colors flex items-center gap-2"
+            >
+              <i className="fab fa-google"></i>
+              <span>로그인</span>
+            </button>
+          )}
        </div>
     </header>
   );
@@ -1036,6 +1127,8 @@ export const App: React.FC = () => {
     const [detailItem, setDetailItem] = useState<HistoryItem | null>(null);
     const [showZoom, setShowZoom] = useState<string | null>(null);
     const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+    const [user, setUser] = useState<User | null>(null);
+    const [authLoading, setAuthLoading] = useState(true);
 
     const [sidebarWidth, setSidebarWidth] = useState(340);
     const [isResizing, setIsResizing] = useState(false);
@@ -1062,6 +1155,21 @@ export const App: React.FC = () => {
         if (!hasApiKey()) {
             setShowApiKeyModal(true);
         }
+    }, []);
+
+    // Listen to auth state changes
+    useEffect(() => {
+        const unsubscribe = onAuthStateChange((user) => {
+            setUser(user);
+            setAuthLoading(false);
+            if (user) {
+                console.log('User signed in:', user.email);
+            } else {
+                console.log('User signed out');
+            }
+        });
+
+        return () => unsubscribe();
     }, []);
 
     const handleApiKeySave = (apiKey: string) => {
@@ -1584,7 +1692,7 @@ export const App: React.FC = () => {
                 className="bg-[#050505] min-h-screen text-slate-200 font-sans transition-colors duration-300 flex flex-col h-screen overflow-hidden"
                 style={dotCanvasStyle}
             >
-                <CommonHeader 
+                <CommonHeader
                     title={currentPage === 'STUDIO' ? t.studio : currentPage === 'EDIT_IMAGE' ? t.edit : currentPage === 'INPAINTING' ? t.inpaint : currentPage === 'LIBRARY' ? t.library : currentPage}
                     current={currentPage}
                     onNavigate={setCurrentPage}
@@ -1593,6 +1701,8 @@ export const App: React.FC = () => {
                     lang={lang}
                     toggleLang={() => setLang(lang === 'EN' ? 'KO' : 'EN')}
                     t={t}
+                    user={user}
+                    authLoading={authLoading}
                 />
                 
                 <main className="flex-1 overflow-hidden relative flex flex-col md:flex-row">
