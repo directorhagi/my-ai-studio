@@ -75,7 +75,7 @@ const ApiKeyModal: React.FC<ApiKeyModalProps> = ({ onSave, isDarkMode = true }) 
             <ol className="text-xs text-slate-300 space-y-1 ml-4 list-decimal">
               <li>
                 <a
-                  href="https://ai.google.dev/"
+                  href="https://aistudio.google.com/api-keys"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-indigo-400 hover:text-indigo-300 underline"
@@ -84,7 +84,7 @@ const ApiKeyModal: React.FC<ApiKeyModalProps> = ({ onSave, isDarkMode = true }) 
                 </a>
                 에 접속
               </li>
-              <li>"Get API Key" 클릭</li>
+              <li>"Create API Key" 클릭</li>
               <li>발급받은 키를 위에 입력</li>
             </ol>
           </div>
