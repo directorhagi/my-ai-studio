@@ -1680,12 +1680,7 @@ export const App: React.FC = () => {
                                         </div>
 
                                         {optionCategories.map(cat => <SidebarItemSlot key={cat} catConfig={cat} item={null} selectedValue={studioState[cat === Category.GENDER ? 'selectedGender' : cat === Category.FIT ? 'selectedFit' : cat === Category.BACKGROUND ? 'selectedBackground' : 'selectedPose']} isDarkMode={true} onFileSelect={handleStudioFile} onRemoveItem={handleStudioRemove} onLengthChange={() => {}} onOptionChange={(type, val) => setStudioState(p => ({ ...p, [type === 'fit' ? 'selectedFit' : type === 'pose' ? 'selectedPose' : type === 'bg' ? 'selectedBackground' : 'selectedGender']: val }))} layout="option" t={t} />)}
-                                        
-                                        <div className="grid grid-cols-2 gap-2 mb-4">
-                                            <SidebarItemSlot catConfig={Category.MODEL_AURORA} item={studioState.views[studioState.currentView].items[Category.MODEL_AURORA]} isDarkMode={true} onFileSelect={handleStudioFile} onRemoveItem={handleStudioRemove} onLengthChange={() => {}} onOptionChange={() => {}} layout='full' t={t} />
-                                            <SidebarItemSlot catConfig={Category.MODEL_ORION} item={studioState.views[studioState.currentView].items[Category.MODEL_ORION]} isDarkMode={true} onFileSelect={handleStudioFile} onRemoveItem={handleStudioRemove} onLengthChange={() => {}} onOptionChange={() => {}} layout='full' t={t} />
-                                        </div>
-                                        
+
                                         <div className="grid grid-cols-2 gap-x-2 gap-y-6">
                                             {standardCategories.filter(c => c !== Category.MODEL).map(cat => (
                                                 <SidebarItemSlot key={cat} catConfig={cat} item={studioState.views[studioState.currentView].items[cat]} isDarkMode={true} onFileSelect={handleStudioFile} onRemoveItem={handleStudioRemove} onLengthChange={(c, l) => setStudioState(p => ({ ...p, views: { ...p.views, [p.currentView]: { ...p.views[p.currentView], items: { ...p.views[p.currentView].items, [c]: { ...p.views[p.currentView].items[c]!, length: l } } } } }))} onOptionChange={() => {}} layout='grid' t={t} />
