@@ -923,9 +923,10 @@ const CommonHeader: React.FC<CommonHeaderProps> = ({ title, current, onNavigate,
           ) : user ? (
             <button
               onClick={handleLogout}
-              className="bg-white text-black px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider hover:bg-indigo-50 transition-colors"
+              className="relative px-5 py-2 rounded-full text-xs font-bold uppercase tracking-wider cursor-pointer overflow-hidden group bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:shadow-lg hover:shadow-indigo-500/50 transition-all duration-300"
             >
-              로그아웃
+              <span className="relative z-10">로그아웃</span>
+              <div className="absolute inset-0 bg-gradient-to-r from-purple-500 to-pink-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
             </button>
           ) : (
             <button
@@ -940,9 +941,10 @@ const CommonHeader: React.FC<CommonHeaderProps> = ({ title, current, onNavigate,
                   alert(error.message || '로그인에 실패했습니다.');
                 }
               }}
-              className="bg-white text-black px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider hover:bg-indigo-50 transition-colors"
+              className="relative px-5 py-2 rounded-full text-xs font-bold uppercase tracking-wider cursor-pointer overflow-hidden group bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:shadow-lg hover:shadow-indigo-500/50 transition-all duration-300"
             >
-              로그인
+              <span className="relative z-10">로그인</span>
+              <div className="absolute inset-0 bg-gradient-to-r from-purple-500 to-pink-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
             </button>
           )}
        </div>
@@ -985,9 +987,10 @@ const LandingPage: React.FC<{ onNavigate: (page: PageType) => void; t: any; user
                  {user ? (
                    <button
                      onClick={handleLogout}
-                     className="bg-white text-black px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider hover:bg-indigo-50 transition-colors cursor-pointer"
+                     className="relative px-6 py-2.5 rounded-full text-xs font-bold uppercase tracking-wider cursor-pointer overflow-hidden group bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:shadow-lg hover:shadow-indigo-500/50 transition-all duration-300"
                    >
-                     로그아웃
+                     <span className="relative z-10">로그아웃</span>
+                     <div className="absolute inset-0 bg-gradient-to-r from-purple-500 to-pink-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
                    </button>
                  ) : (
                    <button
@@ -1001,9 +1004,10 @@ const LandingPage: React.FC<{ onNavigate: (page: PageType) => void; t: any; user
                          alert(error.message || '로그인에 실패했습니다.');
                        }
                      }}
-                     className="bg-white text-black px-4 py-2 rounded-full text-xs font-bold uppercase tracking-wider hover:bg-indigo-50 transition-colors cursor-pointer"
+                     className="relative px-6 py-2.5 rounded-full text-xs font-bold uppercase tracking-wider cursor-pointer overflow-hidden group bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:shadow-lg hover:shadow-indigo-500/50 transition-all duration-300"
                    >
-                     로그인
+                     <span className="relative z-10">로그인</span>
+                     <div className="absolute inset-0 bg-gradient-to-r from-purple-500 to-pink-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
                    </button>
                  )}
              </div>
