@@ -1,52 +1,84 @@
 import { getGoogleAccessToken } from './authService';
 
 /**
- * Google Drive API Service
+ * Google Drive API Service using gapi
  * Handles image upload, download, and management
  */
 
-const DRIVE_API_BASE = 'https://www.googleapis.com/drive/v3';
-const DRIVE_UPLOAD_BASE = 'https://www.googleapis.com/upload/drive/v3';
-
-// Folder name for storing app images
 const APP_FOLDER_NAME = 'MY_AI_STUDIO_Images';
+
+// Initialize gapi client
+let gapiInitialized = false;
+let gapiInitPromise: Promise<void> | null = null;
+
+const initGapi = async (): Promise<void> => {
+  if (gapiInitialized) return;
+  if (gapiInitPromise) return gapiInitPromise;
+
+  gapiInitPromise = new Promise((resolve, reject) => {
+    const checkGapi = () => {
+      if (typeof gapi !== 'undefined') {
+        gapi.load('client', async () => {
+          try {
+            await gapi.client.init({
+              discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'],
+            });
+            gapiInitialized = true;
+            console.log('[Drive] gapi initialized');
+            resolve();
+          } catch (error) {
+            console.error('[Drive] Failed to initialize gapi:', error);
+            reject(error);
+          }
+        });
+      } else {
+        setTimeout(checkGapi, 100);
+      }
+    };
+    checkGapi();
+  });
+
+  return gapiInitPromise;
+};
+
+// Set access token for gapi
+const setGapiToken = () => {
+  const token = getGoogleAccessToken();
+  if (!token) {
+    throw new Error('Not authenticated. Please sign in with Google.');
+  }
+  gapi.client.setToken({ access_token: token });
+};
 
 /**
  * Get or create app folder in Google Drive
  */
-const getOrCreateAppFolder = async (accessToken: string): Promise<string> => {
+const getOrCreateAppFolder = async (): Promise<string> => {
   try {
+    await initGapi();
+    setGapiToken();
+
     // Search for existing folder
-    const searchResponse = await fetch(
-      `${DRIVE_API_BASE}/files?q=name='${APP_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      }
-    );
+    const response = await gapi.client.drive.files.list({
+      q: `name='${APP_FOLDER_NAME}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+      fields: 'files(id, name)',
+      spaces: 'drive',
+    });
 
-    const searchData = await searchResponse.json();
-
-    if (searchData.files && searchData.files.length > 0) {
-      return searchData.files[0].id;
+    if (response.result.files && response.result.files.length > 0) {
+      return response.result.files[0].id!;
     }
 
     // Create new folder if not exists
-    const createResponse = await fetch(`${DRIVE_API_BASE}/files`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
+    const createResponse = await gapi.client.drive.files.create({
+      resource: {
         name: APP_FOLDER_NAME,
         mimeType: 'application/vnd.google-apps.folder',
-      }),
+      },
+      fields: 'id',
     });
 
-    const createData = await createResponse.json();
-    return createData.id;
+    return createResponse.result.id!;
   } catch (error) {
     console.error('Error getting/creating app folder:', error);
     throw new Error('Failed to access Google Drive folder');
@@ -54,10 +86,7 @@ const getOrCreateAppFolder = async (accessToken: string): Promise<string> => {
 };
 
 /**
- * Upload image to Google Drive
- * @param imageBlob - Image blob or file
- * @param fileName - Name for the file
- * @param metadata - Additional metadata (prompt, settings, etc.)
+ * Upload image to Google Drive using gapi
  */
 export const uploadImageToDrive = async (
   imageBlob: Blob,
@@ -66,32 +95,40 @@ export const uploadImageToDrive = async (
     prompt?: string;
     settings?: any;
     tags?: string[];
+    [key: string]: any;
   }
 ): Promise<{ fileId: string; fileName: string }> => {
   try {
-    const accessToken = getGoogleAccessToken();
-    if (!accessToken) {
-      throw new Error('Not authenticated. Please sign in with Google.');
-    }
+    console.log('[Drive/gapi] Starting upload:', fileName);
+    await initGapi();
+    setGapiToken();
 
     // Get app folder
-    const folderId = await getOrCreateAppFolder(accessToken);
+    const folderId = await getOrCreateAppFolder();
 
     // Prepare file metadata
+    // Store all metadata except large objects like 'settings' (Drive has size limits)
+    const { settings, ...cleanMetadata } = metadata || {};
+
+    // Convert all values to strings for properties
+    const properties: { [key: string]: string } = {};
+    for (const [key, value] of Object.entries(cleanMetadata)) {
+      if (value !== undefined && value !== null) {
+        properties[key] = typeof value === 'string' ? value : JSON.stringify(value);
+      }
+    }
+
     const fileMetadata = {
       name: fileName,
       parents: [folderId],
       description: metadata?.prompt || '',
-      properties: metadata || {},
+      properties: properties,
     };
 
-    // Create multipart upload
+    // Create form data for multipart upload
     const boundary = '-------314159265358979323846';
-    const delimiter = `\r\n--${boundary}\r\n`;
-    const closeDelimiter = `\r\n--${boundary}--`;
-
-    const metadataString = JSON.stringify(fileMetadata);
-    const contentType = imageBlob.type || 'image/png';
+    const delimiter = "\r\n--" + boundary + "\r\n";
+    const closeDelimiter = "\r\n--" + boundary + "--";
 
     // Read blob as base64
     const reader = new FileReader();
@@ -109,41 +146,35 @@ export const uploadImageToDrive = async (
     const multipartRequestBody =
       delimiter +
       'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
-      metadataString +
+      JSON.stringify(fileMetadata) +
       delimiter +
-      `Content-Type: ${contentType}\r\n` +
+      `Content-Type: ${imageBlob.type || 'image/png'}\r\n` +
       'Content-Transfer-Encoding: base64\r\n\r\n' +
       base64Data +
       closeDelimiter;
 
-    const response = await fetch(
-      `${DRIVE_UPLOAD_BASE}/files?uploadType=multipart`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': `multipart/related; boundary=${boundary}`,
-        },
-        body: multipartRequestBody,
-      }
-    );
+    // Upload using gapi request (not client.drive.files.create for multipart)
+    const response = await gapi.client.request({
+      path: '/upload/drive/v3/files',
+      method: 'POST',
+      params: {
+        uploadType: 'multipart',
+      },
+      headers: {
+        'Content-Type': `multipart/related; boundary=${boundary}`,
+      },
+      body: multipartRequestBody,
+    });
 
-    if (!response.ok) {
-      const error = await response.json();
-      console.error('Drive upload error:', error);
-      throw new Error(error.error?.message || 'Failed to upload to Google Drive');
-    }
-
-    const data = await response.json();
-    console.log('Image uploaded to Drive:', data.name);
+    console.log('[Drive/gapi] Upload complete:', response.result.name);
 
     return {
-      fileId: data.id,
-      fileName: data.name,
+      fileId: response.result.id,
+      fileName: response.result.name,
     };
   } catch (error: any) {
-    console.error('Error uploading to Drive:', error);
-    throw error;
+    console.error('[Drive/gapi] Upload failed:', error);
+    throw new Error(error.result?.error?.message || 'Failed to upload to Google Drive');
   }
 };
 
@@ -162,110 +193,83 @@ export const listImagesFromDrive = async (): Promise<
   }>
 > => {
   try {
-    const accessToken = getGoogleAccessToken();
-    if (!accessToken) {
-      throw new Error('Not authenticated. Please sign in with Google.');
-    }
+    await initGapi();
+    setGapiToken();
 
     // Get app folder
-    const folderId = await getOrCreateAppFolder(accessToken);
+    const folderId = await getOrCreateAppFolder();
 
     // List files in app folder
-    const response = await fetch(
-      `${DRIVE_API_BASE}/files?q='${folderId}' in parents and trashed=false&fields=files(id,name,createdTime,thumbnailLink,webViewLink,description,properties)&orderBy=createdTime desc`,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      }
-    );
+    const response = await gapi.client.drive.files.list({
+      q: `'${folderId}' in parents and trashed=false`,
+      fields: 'files(id,name,createdTime,thumbnailLink,webViewLink,description,properties)',
+      orderBy: 'createdTime desc',
+      spaces: 'drive',
+    });
 
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error?.message || 'Failed to list files from Google Drive');
-    }
-
-    const data = await response.json();
-    return data.files || [];
+    return response.result.files || [];
   } catch (error: any) {
-    console.error('Error listing from Drive:', error);
-    throw error;
+    console.error('[Drive/gapi] List failed:', error);
+    throw new Error(error.result?.error?.message || 'Failed to list files from Google Drive');
   }
 };
 
 /**
  * Download image from Google Drive
- * @param fileId - Drive file ID
  */
-export const downloadImageFromDrive = async (
-  fileId: string
-): Promise<Blob> => {
+export const downloadImageFromDrive = async (fileId: string): Promise<Blob> => {
   try {
-    const accessToken = getGoogleAccessToken();
-    if (!accessToken) {
+    const token = getGoogleAccessToken();
+    if (!token) {
       throw new Error('Not authenticated. Please sign in with Google.');
     }
 
-    const response = await fetch(
-      `${DRIVE_API_BASE}/files/${fileId}?alt=media`,
-      {
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-        },
-      }
-    );
+    // Use direct fetch with access token to get blob data
+    const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+    });
 
     if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.error?.message || 'Failed to download from Google Drive');
+      throw new Error(`Failed to download: ${response.statusText}`);
     }
 
     return await response.blob();
   } catch (error: any) {
-    console.error('Error downloading from Drive:', error);
-    throw error;
+    console.error('[Drive/gapi] Download failed:', error);
+    throw new Error(error.message || 'Failed to download from Google Drive');
   }
 };
 
 /**
  * Delete image from Google Drive
- * @param fileId - Drive file ID
  */
 export const deleteImageFromDrive = async (fileId: string): Promise<void> => {
   try {
-    const accessToken = getGoogleAccessToken();
-    if (!accessToken) {
-      throw new Error('Not authenticated. Please sign in with Google.');
-    }
+    await initGapi();
+    setGapiToken();
 
-    const response = await fetch(`${DRIVE_API_BASE}/files/${fileId}`, {
-      method: 'DELETE',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
+    await gapi.client.drive.files.delete({
+      fileId: fileId,
     });
 
-    if (!response.ok && response.status !== 204) {
-      const error = await response.json();
-      throw new Error(error.error?.message || 'Failed to delete from Google Drive');
-    }
-
-    console.log('Image deleted from Drive');
+    console.log('[Drive/gapi] File deleted:', fileId);
   } catch (error: any) {
-    console.error('Error deleting from Drive:', error);
-    throw error;
+    console.error('[Drive/gapi] Delete failed:', error);
+    throw new Error(error.result?.error?.message || 'Failed to delete from Google Drive');
   }
 };
 
 /**
  * Get direct download URL for an image
- * @param fileId - Drive file ID
  */
 export const getImageDownloadUrl = async (fileId: string): Promise<string> => {
-  const accessToken = getGoogleAccessToken();
-  if (!accessToken) {
+  const token = getGoogleAccessToken();
+  if (!token) {
     throw new Error('Not authenticated. Please sign in with Google.');
   }
 
-  return `${DRIVE_API_BASE}/files/${fileId}?alt=media&access_token=${accessToken}`;
+  return `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&access_token=${token}`;
 };

@@ -1012,20 +1012,39 @@ const LandingPage: React.FC<{ onNavigate: (page: PageType) => void; t: any; user
       </nav>
       
       <main className="flex-1 flex flex-col justify-center items-center relative z-10 w-full max-w-7xl mx-auto px-6 py-20">
+        {!user && (
+          <div className="mb-8 px-6 py-4 bg-indigo-600/20 border border-indigo-500/30 rounded-xl text-center">
+            <i className="fas fa-lock text-indigo-400 text-2xl mb-2"></i>
+            <p className="text-sm text-white font-bold mb-1">로그인이 필요합니다</p>
+            <p className="text-xs text-slate-300">Google 로그인 후 모든 기능을 사용할 수 있습니다</p>
+          </div>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 w-full">
-          <div onClick={() => onNavigate('STUDIO')} className="group relative h-80 rounded-3xl bg-[#111] border border-white/10 p-1 overflow-hidden cursor-pointer hover:border-indigo-500/50 transition-all duration-300">
+          <div
+            onClick={() => user ? onNavigate('STUDIO') : alert('로그인이 필요합니다')}
+            className={`group relative h-80 rounded-3xl bg-[#111] border border-white/10 p-1 overflow-hidden transition-all duration-300 ${user ? 'cursor-pointer hover:border-indigo-500/50' : 'cursor-not-allowed opacity-60'}`}
+          >
             <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/90 z-10"></div><div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1539109136881-3be0616acf4b?q=80&w=1000&auto=format&fit=crop')] bg-cover bg-center opacity-40 group-hover:opacity-60 group-hover:scale-105 transition-all duration-700"></div>
             <div className="absolute bottom-0 left-0 w-full p-6 z-20"><div className="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center mb-4 text-white shadow-lg group-hover:scale-110 transition-transform"><i className="fas fa-tshirt"></i></div><h3 className="text-2xl font-bold mb-2 text-white">{t.fittingStudio}</h3><p className="text-sm text-slate-300 mb-4 line-clamp-2">{t.fittingDesc}</p><div className="flex items-center text-indigo-400 text-xs font-bold uppercase tracking-wider group-hover:translate-x-2 transition-transform">{t.enterStudio} <i className="fas fa-arrow-right ml-2"></i></div></div>
           </div>
-          <div onClick={() => onNavigate('EDIT_IMAGE')} className="group relative h-80 rounded-3xl bg-[#111] border border-white/10 p-1 overflow-hidden cursor-pointer hover:border-purple-500/50 transition-all duration-300">
+          <div
+            onClick={() => user ? onNavigate('EDIT_IMAGE') : alert('로그인이 필요합니다')}
+            className={`group relative h-80 rounded-3xl bg-[#111] border border-white/10 p-1 overflow-hidden transition-all duration-300 ${user ? 'cursor-pointer hover:border-purple-500/50' : 'cursor-not-allowed opacity-60'}`}
+          >
             <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/90 z-10"></div><div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1550684848-fac1c5b4e853?q=80&w=1000&auto=format&fit=crop')] bg-cover bg-center opacity-40 group-hover:opacity-60 group-hover:scale-105 transition-all duration-700"></div>
             <div className="absolute bottom-0 left-0 w-full p-6 z-20"><div className="w-10 h-10 rounded-xl bg-purple-600 flex items-center justify-center mb-4 text-white shadow-lg group-hover:scale-110 transition-transform"><i className="fas fa-sliders-h"></i></div><h3 className="text-2xl font-bold mb-2 text-white">{t.edit}</h3><p className="text-sm text-slate-300 mb-4 line-clamp-2">{t.editDesc}</p><div className="flex items-center text-purple-400 text-xs font-bold uppercase tracking-wider group-hover:translate-x-2 transition-transform">{t.openEditor} <i className="fas fa-arrow-right ml-2"></i></div></div>
           </div>
-          <div onClick={() => onNavigate('INPAINTING')} className="group relative h-80 rounded-3xl bg-[#111] border border-white/10 p-1 overflow-hidden cursor-pointer hover:border-pink-500/50 transition-all duration-300">
+          <div
+            onClick={() => user ? onNavigate('INPAINTING') : alert('로그인이 필요합니다')}
+            className={`group relative h-80 rounded-3xl bg-[#111] border border-white/10 p-1 overflow-hidden transition-all duration-300 ${user ? 'cursor-pointer hover:border-pink-500/50' : 'cursor-not-allowed opacity-60'}`}
+          >
              <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/90 z-10"></div><div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=1000&auto=format&fit=crop')] bg-cover bg-center opacity-40 group-hover:opacity-60 group-hover:scale-105 transition-all duration-700"></div>
              <div className="absolute bottom-0 left-0 w-full p-6 z-20"><div className="w-10 h-10 rounded-xl bg-pink-600 flex items-center justify-center mb-4 text-white shadow-lg group-hover:scale-110 transition-transform"><i className="fas fa-eraser"></i></div><h3 className="text-2xl font-bold mb-2 text-white">{t.inpaint}</h3><p className="text-sm text-slate-300 mb-4 line-clamp-2">{t.inpaintDesc}</p><div className="flex items-center text-pink-400 text-xs font-bold uppercase tracking-wider group-hover:translate-x-2 transition-transform">{t.openInpaint} <i className="fas fa-arrow-right ml-2"></i></div></div>
           </div>
-          <div onClick={() => onNavigate('LIBRARY')} className="group relative h-80 rounded-3xl bg-[#111] border border-white/10 p-1 overflow-hidden cursor-pointer hover:border-blue-500/50 transition-all duration-300">
+          <div
+            onClick={() => user ? onNavigate('LIBRARY') : alert('로그인이 필요합니다')}
+            className={`group relative h-80 rounded-3xl bg-[#111] border border-white/10 p-1 overflow-hidden transition-all duration-300 ${user ? 'cursor-pointer hover:border-blue-500/50' : 'cursor-not-allowed opacity-60'}`}
+          >
              <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/90 z-10"></div><div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1513542789411-b6a5d4f31634?q=80&w=1000&auto=format&fit=crop')] bg-cover bg-center opacity-40 group-hover:opacity-60 group-hover:scale-105 transition-all duration-700"></div>
              <div className="absolute bottom-0 left-0 w-full p-6 z-20"><div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center mb-4 text-white shadow-lg group-hover:scale-110 transition-transform"><i className="fas fa-th-large"></i></div><h3 className="text-2xl font-bold mb-2 text-white">{t.library}</h3><p className="text-sm text-slate-300 mb-4 line-clamp-2">{t.libraryDesc}</p><div className="flex items-center text-blue-400 text-xs font-bold uppercase tracking-wider group-hover:translate-x-2 transition-transform">{t.viewLibrary} <i className="fas fa-arrow-right ml-2"></i></div></div>
           </div>
@@ -1099,11 +1118,6 @@ export const App: React.FC = () => {
     const [user, setUser] = useState<User | null>(null);
     const [authLoading, setAuthLoading] = useState(true);
 
-    // Google Drive state
-    const [libraryTab, setLibraryTab] = useState<'local' | 'drive'>('local');
-    const [driveImages, setDriveImages] = useState<any[]>([]);
-    const [loadingDrive, setLoadingDrive] = useState(false);
-
     const [sidebarWidth, setSidebarWidth] = useState(340);
     const [isResizing, setIsResizing] = useState(false);
     
@@ -1164,65 +1178,28 @@ export const App: React.FC = () => {
     };
 
     // Google Drive functions
-    const loadDriveImages = async () => {
-        if (!user) {
-            alert('Google 로그인이 필요합니다.');
-            return;
-        }
-
-        setLoadingDrive(true);
-        try {
-            const images = await listImagesFromDrive();
-            setDriveImages(images);
-        } catch (error: any) {
-            console.error('Failed to load Drive images:', error);
-            alert(error.message || 'Drive 이미지를 불러오는데 실패했습니다.');
-        } finally {
-            setLoadingDrive(false);
-        }
-    };
-
     const saveToDrive = async (imageUrl: string, fileName: string, metadata?: any) => {
         if (!user) {
-            alert('Google 로그인이 필요합니다.');
-            return;
+            throw new Error('User not logged in');
         }
 
         try {
+            console.log('[Drive] Fetching image blob from:', imageUrl.substring(0, 50) + '...');
             // Convert image URL to blob
             const response = await fetch(imageUrl);
+            if (!response.ok) {
+                throw new Error(`Failed to fetch image: ${response.status} ${response.statusText}`);
+            }
             const blob = await response.blob();
+            console.log('[Drive] Blob created:', blob.type, blob.size, 'bytes');
 
             // Upload to Drive
+            console.log('[Drive] Uploading to Drive:', fileName);
             await uploadImageToDrive(blob, fileName, metadata);
-            alert('Drive에 저장되었습니다!');
-
-            // Reload drive images if on drive tab
-            if (libraryTab === 'drive') {
-                await loadDriveImages();
-            }
+            console.log('[Drive] Upload complete:', fileName);
         } catch (error: any) {
-            console.error('Failed to save to Drive:', error);
-            alert(error.message || 'Drive 저장에 실패했습니다.');
-        }
-    };
-
-    const deleteFromDrive = async (fileId: string) => {
-        if (!user) {
-            return;
-        }
-
-        if (!confirm('Drive에서 이미지를 삭제하시겠습니까?')) {
-            return;
-        }
-
-        try {
-            await deleteImageFromDrive(fileId);
-            alert('삭제되었습니다.');
-            await loadDriveImages();
-        } catch (error: any) {
-            console.error('Failed to delete from Drive:', error);
-            alert(error.message || 'Drive 삭제에 실패했습니다.');
+            console.error('[Drive] Failed to save to Drive:', error);
+            throw error;
         }
     };
 
@@ -1249,12 +1226,141 @@ export const App: React.FC = () => {
         }
     };
 
-    // Load drive images when switching to drive tab
-    useEffect(() => {
-        if (libraryTab === 'drive' && user && currentPage === 'LIBRARY') {
-            loadDriveImages();
+    // Add item to history and automatically save to Drive
+    const addToHistoryAndDrive = async (item: HistoryItem) => {
+        // Add to local history first
+        setHistory(prev => [item, ...prev]);
+
+        // Save to Drive in background (don't block UI)
+        if (user) {
+            console.log('[Drive] Auto-saving to Drive:', item.type, item.date);
+            const fileName = `${item.type}_${item.date}.png`;
+            const metadata = {
+                type: item.type,
+                date: item.date,
+                preset: item.preset,
+                view: item.view,
+                size: item.size,
+                ...item.metadata
+            };
+
+            try {
+                await saveToDrive(item.url, fileName, metadata);
+                console.log('[Drive] Successfully saved to Drive:', fileName);
+            } catch (error) {
+                console.error('[Drive] Failed to auto-save to Drive:', error);
+                // Show error to user
+                alert('Drive 자동 저장 실패: ' + (error as Error).message);
+            }
         }
-    }, [libraryTab, user, currentPage]);
+    };
+
+    // Add multiple items to history and Drive
+    const addMultipleToHistoryAndDrive = async (items: HistoryItem[]) => {
+        // Add to local history first
+        setHistory(prev => [...items, ...prev]);
+
+        // Save to Drive in background
+        if (user) {
+            console.log('[Drive] Auto-saving multiple images to Drive:', items.length);
+            for (const item of items) {
+                const fileName = `${item.type}_${item.date}.png`;
+                const metadata = {
+                    type: item.type,
+                    date: item.date,
+                    preset: item.preset,
+                    view: item.view,
+                    size: item.size,
+                    ...item.metadata
+                };
+
+                try {
+                    await saveToDrive(item.url, fileName, metadata);
+                    console.log('[Drive] Successfully saved:', fileName);
+                } catch (error) {
+                    console.error('[Drive] Failed to save:', fileName, error);
+                }
+            }
+        }
+    };
+
+    // Convert Drive image to HistoryItem format
+    const convertDriveImageToHistoryItem = async (driveImage: any): Promise<HistoryItem> => {
+        try {
+            // Download image to create local URL
+            const blob = await downloadImageFromDrive(driveImage.id);
+            const url = URL.createObjectURL(blob);
+
+            // Parse metadata from properties (values are JSON strings)
+            const props = driveImage.properties || {};
+
+            // Helper to parse JSON strings or return original value
+            const parseValue = (val: string) => {
+                if (!val) return val;
+                try {
+                    return JSON.parse(val);
+                } catch {
+                    return val; // Return as-is if not valid JSON
+                }
+            };
+
+            return {
+                id: driveImage.id,
+                url: url,
+                date: props.date ? parseInt(parseValue(props.date)) : new Date(driveImage.createdTime).getTime(),
+                type: (parseValue(props.type) as GenerationType) || 'FITTING',
+                preset: parseValue(props.preset),
+                view: parseValue(props.view),
+                size: parseValue(props.size),
+                liked: false,
+                metadata: {
+                    prompt: parseValue(props.prompt) || driveImage.description,
+                    fit: parseValue(props.fit),
+                    pose: parseValue(props.pose),
+                    background: parseValue(props.background),
+                    aspectRatio: parseValue(props.aspectRatio),
+                    modelName: parseValue(props.modelName),
+                    gender: parseValue(props.gender),
+                    seed: props.seed ? parseInt(parseValue(props.seed)) : undefined
+                }
+            };
+        } catch (error) {
+            console.error('Failed to convert Drive image:', error);
+            throw error;
+        }
+    };
+
+    // Auto-load all images from Drive on login
+    useEffect(() => {
+        const loadDriveImages = async () => {
+            if (user) {
+                try {
+                    console.log('[Drive] Loading images from Drive...');
+                    const driveImages = await listImagesFromDrive();
+                    console.log('[Drive] Found', driveImages.length, 'images');
+
+                    const historyItems: HistoryItem[] = [];
+                    for (const driveImage of driveImages) {
+                        try {
+                            const item = await convertDriveImageToHistoryItem(driveImage);
+                            historyItems.push(item);
+                        } catch (error) {
+                            console.error('[Drive] Failed to load image:', driveImage.name, error);
+                        }
+                    }
+
+                    setHistory(historyItems);
+                    console.log('[Drive] Loaded', historyItems.length, 'images to library');
+                } catch (error) {
+                    console.error('[Drive] Failed to load images from Drive:', error);
+                }
+            } else {
+                setHistory([]);
+            }
+        };
+
+        loadDriveImages();
+    }, [user]);
 
     const [studioState, setStudioState] = useState<AppState>({
         currentView: 'FRONT',
@@ -1552,25 +1658,25 @@ export const App: React.FC = () => {
             }));
             
             const newHistoryItems: HistoryItem[] = result.imageUrls.map((url, index) => ({
-                id: batchId + "_" + index, 
-                url: url, 
-                date: Date.now(), 
+                id: batchId + "_" + index,
+                url: url,
+                date: Date.now(),
                 type: 'FITTING',
-                liked: false, 
+                liked: false,
                 preset: studioState.stylePreset, view: studioState.currentView, size: studioState.imageSize,
-                metadata: { 
-                    prompt: studioState.userPrompt, 
-                    fit: studioState.selectedFit, 
-                    pose: studioState.selectedPose, 
-                    background: studioState.selectedBackground, 
-                    gender: studioState.selectedGender, 
-                    modelName: studioState.selectedModel, 
-                    aspectRatio: studioState.aspectRatio, 
+                metadata: {
+                    prompt: studioState.userPrompt,
+                    fit: studioState.selectedFit,
+                    pose: studioState.selectedPose,
+                    background: studioState.selectedBackground,
+                    gender: studioState.selectedGender,
+                    modelName: studioState.selectedModel,
+                    aspectRatio: studioState.aspectRatio,
                     refImages: studioState.refImages,
-                    seed: result.seeds[index] 
+                    seed: result.seeds[index]
                 }
             }));
-            setHistory(prev => [...newHistoryItems, ...prev]);
+            addMultipleToHistoryAndDrive(newHistoryItems);
             
             delete cancelControllers.current[batchId];
 
@@ -1598,11 +1704,11 @@ export const App: React.FC = () => {
             const result = await generateEditedImage(editImage, editParams, editPrompt, editRefImages, studioState.aspectRatio, studioState.selectedModel, seedToUse);
             setEditResult(result.imageUrl);
             
-            const newItem: HistoryItem = { 
+            const newItem: HistoryItem = {
                 id: Date.now().toString(), url: result.imageUrl, date: Date.now(), type: 'EDIT', liked: false,
-                metadata: { prompt: editPrompt, refImages: editRefImages, modelName: studioState.selectedModel, seed: result.seed } 
+                metadata: { prompt: editPrompt, refImages: editRefImages, modelName: studioState.selectedModel, seed: result.seed }
             };
-            setHistory(prev => [newItem, ...prev]);
+            addToHistoryAndDrive(newItem);
             setDetailItem(newItem);
             
         } catch(e) { console.error(e); } finally { setIsEditing(false); }
@@ -1618,11 +1724,11 @@ export const App: React.FC = () => {
             const result = await generateInpainting(inpaintBase, mask, inpaintPrompt, inpaintRefImages, studioState.selectedModel, seedToUse);
             setInpaintResult(result.imageUrl);
             
-            const newItem: HistoryItem = { 
+            const newItem: HistoryItem = {
                 id: Date.now().toString(), url: result.imageUrl, date: Date.now(), type: 'INPAINTING', liked: false,
-                metadata: { prompt: inpaintPrompt, refImages: inpaintRefImages, modelName: studioState.selectedModel, seed: result.seed } 
+                metadata: { prompt: inpaintPrompt, refImages: inpaintRefImages, modelName: studioState.selectedModel, seed: result.seed }
             };
-            setHistory(prev => [newItem, ...prev]);
+            addToHistoryAndDrive(newItem);
             setDetailItem(newItem);
             
         } catch(e) { console.error(e); } finally { setIsInpainting(false); }
@@ -1751,7 +1857,10 @@ export const App: React.FC = () => {
         }
     };
 
-    if (currentPage === 'LANDING') return <LandingPage onNavigate={setCurrentPage} t={t} user={user} handleLogout={handleLogout} />;
+    // Require login - show landing page if not logged in or if on landing page
+    if (currentPage === 'LANDING' || !user) {
+        return <LandingPage onNavigate={user ? setCurrentPage : () => {}} t={t} user={user} handleLogout={handleLogout} />;
+    }
 
     const dotCanvasStyle = {
         backgroundImage: 'radial-gradient(circle, #ffffff15 1px, transparent 1px)',
@@ -2085,114 +2194,50 @@ export const App: React.FC = () => {
                     )}
 
                     {currentPage === 'LIBRARY' && (
-                        <div className="w-full h-full flex flex-col">
-                            {/* Tab Navigation */}
-                            <div className="flex items-center gap-4 px-6 py-4 border-b border-white/5 bg-[#111]/50 backdrop-blur-md">
-                                <button
-                                    onClick={() => setLibraryTab('local')}
-                                    className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
-                                        libraryTab === 'local'
-                                            ? 'bg-indigo-600 text-white'
-                                            : 'bg-transparent text-slate-400 hover:text-white'
-                                    }`}
-                                >
-                                    <i className="fas fa-laptop mr-2"></i>
-                                    로컬
-                                </button>
-                                <button
-                                    onClick={() => setLibraryTab('drive')}
-                                    className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${
-                                        libraryTab === 'drive'
-                                            ? 'bg-indigo-600 text-white'
-                                            : 'bg-transparent text-slate-400 hover:text-white'
-                                    }`}
-                                    disabled={!user}
-                                >
-                                    <i className="fab fa-google-drive mr-2"></i>
-                                    Google Drive
-                                    {!user && <span className="ml-2 text-[8px]">(로그인 필요)</span>}
-                                </button>
-                                {libraryTab === 'drive' && loadingDrive && (
-                                    <i className="fas fa-spinner fa-spin text-slate-400 ml-2"></i>
-                                )}
-                            </div>
-
-                            {/* Content */}
-                            <div className="flex-1 overflow-y-auto custom-scrollbar p-0 pt-4 pb-10">
-                                {libraryTab === 'local' ? (
-                                    <div className="flex flex-wrap content-start">
-                                        {history.map(item => (
-                                            <div key={item.id} onClick={() => setDetailItem(item)} className="relative group overflow-hidden bg-black/20 border border-white/5 shadow-lg hover:border-indigo-500/50 transition-all cursor-pointer w-1/2 md:w-1/4 aspect-[3/4]">
-                                                <img src={item.url} className="w-full h-full object-cover" loading="lazy" />
-                                                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-3">
-                                                    <span className="text-[10px] text-white font-bold uppercase tracking-wider mb-1">{item.type}</span>
-                                                    <span className="text-[8px] text-slate-400 font-mono">{new Date(item.date).toLocaleDateString()}</span>
-                                                </div>
-                                                <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    <button onClick={(e) => { e.stopPropagation(); toggleLike(item.id); }} className={`w-6 h-6 rounded-full flex items-center justify-center backdrop-blur-md transition-all text-[10px] ${item.liked ? 'bg-pink-600 text-white' : 'bg-black/50 text-white/50 hover:text-white hover:bg-black/70'}`}><i className="fas fa-heart"></i></button>
-                                                    {user && (
-                                                        <button
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                saveToDrive(item.url, `${item.type}_${item.date}.png`, { prompt: item.type });
-                                                            }}
-                                                            className="w-6 h-6 rounded-full flex items-center justify-center backdrop-blur-md transition-all text-[10px] bg-black/50 text-white/50 hover:text-white hover:bg-indigo-600"
-                                                            title="Drive에 저장"
-                                                        >
-                                                            <i className="fab fa-google-drive"></i>
-                                                        </button>
-                                                    )}
-                                                    <button onClick={(e) => handleDownload(e, item.url)} className="w-6 h-6 rounded-full flex items-center justify-center backdrop-blur-md transition-all text-[10px] bg-black/50 text-white/50 hover:text-white hover:bg-black/70"><i className="fas fa-download"></i></button>
-                                                </div>
-                                            </div>
-                                        ))}
-                                        {history.length === 0 && (
-                                            <div className="w-full h-96 flex flex-col items-center justify-center text-slate-500 opacity-50">
-                                                <i className="fas fa-folder-open text-4xl mb-4"></i>
-                                                <p className="text-sm font-bold uppercase tracking-widest">{t.noFittings}</p>
-                                            </div>
-                                        )}
+                        <div className="w-full h-full overflow-y-auto custom-scrollbar p-0 pt-4 pb-10">
+                            <div className="flex flex-wrap content-start">
+                                {history.map(item => (
+                                    <div key={item.id} onClick={() => setDetailItem(item)} className="relative group overflow-hidden bg-black/20 border border-white/5 shadow-lg hover:border-indigo-500/50 transition-all cursor-pointer w-1/2 md:w-1/4 aspect-[3/4]">
+                                        <img src={item.url} className="w-full h-full object-cover" loading="lazy" />
+                                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-3">
+                                            <span className="text-[10px] text-white font-bold uppercase tracking-wider mb-1">{item.type}</span>
+                                            {item.metadata?.prompt && (
+                                                <span className="text-[8px] text-slate-300 mb-1 line-clamp-2">{item.metadata.prompt}</span>
+                                            )}
+                                            <span className="text-[8px] text-slate-400 font-mono">{new Date(item.date).toLocaleDateString()}</span>
+                                        </div>
+                                        <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <button onClick={(e) => { e.stopPropagation(); toggleLike(item.id); }} className={`w-6 h-6 rounded-full flex items-center justify-center backdrop-blur-md transition-all text-[10px] ${item.liked ? 'bg-pink-600 text-white' : 'bg-black/50 text-white/50 hover:text-white hover:bg-black/70'}`}><i className="fas fa-heart"></i></button>
+                                            <button onClick={(e) => handleDownload(e, item.url)} className="w-6 h-6 rounded-full flex items-center justify-center backdrop-blur-md transition-all text-[10px] bg-black/50 text-white/50 hover:text-white hover:bg-black/70"><i className="fas fa-download"></i></button>
+                                            <button
+                                                onClick={async (e) => {
+                                                    e.stopPropagation();
+                                                    if (!confirm('이미지를 삭제하시겠습니까? Google Drive에서도 삭제됩니다.')) {
+                                                        return;
+                                                    }
+                                                    // Remove from local history
+                                                    setHistory(prev => prev.filter(h => h.id !== item.id));
+                                                    // Remove from Drive if exists
+                                                    try {
+                                                        await deleteImageFromDrive(item.id);
+                                                    } catch (error) {
+                                                        console.error('Failed to delete from Drive:', error);
+                                                    }
+                                                }}
+                                                className="w-6 h-6 rounded-full flex items-center justify-center backdrop-blur-md transition-all text-[10px] bg-black/50 text-white/50 hover:text-white hover:bg-red-600"
+                                                title="삭제"
+                                            >
+                                                <i className="fas fa-trash"></i>
+                                            </button>
+                                        </div>
                                     </div>
-                                ) : (
-                                    <div className="flex flex-wrap content-start">
-                                        {driveImages.map(image => (
-                                            <div key={image.id} className="relative group overflow-hidden bg-black/20 border border-white/5 shadow-lg hover:border-indigo-500/50 transition-all cursor-pointer w-1/2 md:w-1/4 aspect-[3/4]">
-                                                <img src={`https://drive.google.com/thumbnail?id=${image.id}&sz=w500`} className="w-full h-full object-cover" loading="lazy" />
-                                                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-3">
-                                                    <span className="text-[10px] text-white font-bold uppercase tracking-wider mb-1 truncate">{image.name}</span>
-                                                    <span className="text-[8px] text-slate-400 font-mono">{new Date(image.createdTime).toLocaleDateString()}</span>
-                                                </div>
-                                                <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            downloadFromDrive(image.id, image.name);
-                                                        }}
-                                                        className="w-6 h-6 rounded-full flex items-center justify-center backdrop-blur-md transition-all text-[10px] bg-black/50 text-white/50 hover:text-white hover:bg-black/70"
-                                                        title="다운로드"
-                                                    >
-                                                        <i className="fas fa-download"></i>
-                                                    </button>
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            deleteFromDrive(image.id);
-                                                        }}
-                                                        className="w-6 h-6 rounded-full flex items-center justify-center backdrop-blur-md transition-all text-[10px] bg-black/50 text-white/50 hover:text-white hover:bg-red-600"
-                                                        title="삭제"
-                                                    >
-                                                        <i className="fas fa-trash"></i>
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        ))}
-                                        {driveImages.length === 0 && !loadingDrive && (
-                                            <div className="w-full h-96 flex flex-col items-center justify-center text-slate-500 opacity-50">
-                                                <i className="fab fa-google-drive text-4xl mb-4"></i>
-                                                <p className="text-sm font-bold uppercase tracking-widest">Drive에 저장된 이미지가 없습니다</p>
-                                                <p className="text-xs mt-2">로컬 탭에서 이미지를 Drive에 저장해보세요</p>
-                                            </div>
-                                        )}
+                                ))}
+                                {history.length === 0 && (
+                                    <div className="w-full h-96 flex flex-col items-center justify-center text-slate-500 opacity-50">
+                                        <i className="fas fa-images text-4xl mb-4"></i>
+                                        <p className="text-sm font-bold uppercase tracking-widest">생성된 이미지가 없습니다</p>
+                                        <p className="text-xs mt-2">Studio, Edit, Inpaint에서 이미지를 생성해보세요</p>
+                                        <p className="text-xs text-indigo-400 mt-1">모든 이미지는 자동으로 Google Drive에 저장됩니다</p>
                                     </div>
                                 )}
                             </div>

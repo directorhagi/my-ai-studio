@@ -53,10 +53,20 @@ export const signInWithGoogle = async (): Promise<User | null> => {
     const credential = GoogleAuthProvider.credentialFromResult(result);
     const accessToken = credential?.accessToken;
 
+    console.log('[Auth] Credential:', credential);
+    console.log('[Auth] Access Token:', accessToken ? 'EXISTS (length: ' + accessToken.length + ')' : 'NOT FOUND');
+
     // Store access token for Google Drive API usage
     if (accessToken) {
       sessionStorage.setItem('google_access_token', accessToken);
+      console.log('[Auth] Access token stored in sessionStorage');
+    } else {
+      console.error('[Auth] No access token received! Drive features will not work.');
     }
+
+    // Verify storage
+    const storedToken = sessionStorage.getItem('google_access_token');
+    console.log('[Auth] Verification - Token in storage:', storedToken ? 'YES' : 'NO');
 
     console.log('Successfully signed in:', result.user.email);
     return result.user;
