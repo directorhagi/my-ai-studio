@@ -2138,7 +2138,18 @@ export const App: React.FC = () => {
                                     {!editImage ? (
                                         <DropZone onFileSelect={setEditImage} label={t.uploadTitle} isDarkMode={true} variant="fullscreen" className="w-full h-full pb-20" />
                                     ) : (
-                                        <div className="w-full h-full flex items-center justify-center p-6 pb-40">
+                                        <div className="w-full h-full flex items-center justify-center p-6 pb-40 relative">
+                                            <button
+                                                onClick={() => {
+                                                    setEditImage(null);
+                                                    setEditResult(null);
+                                                    setEditRefImages([]);
+                                                }}
+                                                className="absolute top-8 right-8 z-10 w-10 h-10 bg-red-500/90 hover:bg-red-600 text-white rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110"
+                                                title="Clear image"
+                                            >
+                                                <i className="fas fa-times"></i>
+                                            </button>
                                             <div className="relative w-full h-full flex items-center justify-center">
                                                 <img src={editResult || editImage} className="max-h-full max-w-full rounded-lg shadow-2xl object-contain" />
                                                 {isEditing && <div className="absolute inset-0 bg-black/50 flex items-center justify-center rounded-lg"><i className="fas fa-circle-notch fa-spin text-white text-3xl"></i></div>}
@@ -2188,6 +2199,21 @@ export const App: React.FC = () => {
                                         <DropZone onFileSelect={(b) => setInpaintBase(b)} label={t.uploadTitle} isDarkMode={true} variant="fullscreen" className="w-full h-full pb-20 !cursor-default" />
                                     ) : (
                                         <div className="relative w-full h-full flex items-center justify-center p-6 pb-40 overflow-hidden">
+                                            <button
+                                                onClick={() => {
+                                                    setInpaintBase(null);
+                                                    setInpaintResult(null);
+                                                    setInpaintRefImages([]);
+                                                    const ctx = canvasRef.current?.getContext('2d');
+                                                    if (ctx && canvasRef.current) {
+                                                        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+                                                    }
+                                                }}
+                                                className="absolute top-8 right-8 z-[60] w-10 h-10 bg-red-500/90 hover:bg-red-600 text-white rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110"
+                                                title="Clear image"
+                                            >
+                                                <i className="fas fa-times"></i>
+                                            </button>
                                             <div style={{ transform: `translate(${canvasTransform.x}px, ${canvasTransform.y}px) scale(${canvasTransform.scale})`, transformOrigin: 'center', transition: isPanningRef.current ? 'none' : 'transform 0.1s ease-out' }} className="relative shadow-2xl">
                                                 <img ref={imgRef} src={inpaintResult || inpaintBase} onLoad={handleImageLoad} className="pointer-events-none select-none max-w-none" style={{ display: 'block', maxHeight: '80vh', maxWidth: '80vw' }} />
                                                 <canvas ref={canvasRef} className="absolute inset-0 touch-none" style={{ mixBlendMode: 'screen', opacity: 0.6 }} />
