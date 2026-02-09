@@ -1345,21 +1345,23 @@ export const App: React.FC = () => {
             if (user) {
                 // Wait for token to be available
                 let retries = 0;
-                const maxRetries = 5;
+                const maxRetries = 10;
 
                 while (retries < maxRetries) {
                     const token = getGoogleAccessToken();
                     if (token) {
+                        console.log('[Drive] Access token found');
                         break;
                     }
                     console.log('[Drive] Waiting for access token...', retries + 1);
-                    await new Promise(resolve => setTimeout(resolve, 300));
+                    await new Promise(resolve => setTimeout(resolve, 500));
                     retries++;
                 }
 
                 const token = getGoogleAccessToken();
                 if (!token) {
                     console.error('[Drive] Access token not available after retries');
+                    alert('Google Drive 연결 실패: 로그아웃 후 다시 로그인해주세요.');
                     return;
                 }
 
@@ -1380,8 +1382,15 @@ export const App: React.FC = () => {
 
                     setHistory(historyItems);
                     console.log('[Drive] Loaded', historyItems.length, 'images to library');
-                } catch (error) {
+                } catch (error: any) {
                     console.error('[Drive] Failed to load images from Drive:', error);
+
+                    // Handle 401 unauthorized error
+                    if (error.message && error.message.includes('401') || error.message.includes('Unauthorized') || error.message.includes('UNAUTHENTICATED')) {
+                        console.error('[Drive] Token expired or invalid, clearing token');
+                        sessionStorage.removeItem('google_access_token');
+                        alert('Google Drive 인증이 만료되었습니다. 로그아웃 후 다시 로그인해주세요.');
+                    }
                 }
             } else {
                 setHistory([]);

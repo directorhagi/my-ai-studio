@@ -79,9 +79,16 @@ const getOrCreateAppFolder = async (): Promise<string> => {
     });
 
     return createResponse.result.id!;
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error getting/creating app folder:', error);
-    throw new Error('Failed to access Google Drive folder');
+    const errorMessage = error.result?.error?.message || error.message || 'Failed to access Google Drive folder';
+    const statusCode = error.status || error.result?.error?.code;
+
+    if (statusCode === 401) {
+      throw new Error('401: ' + errorMessage);
+    }
+
+    throw new Error(errorMessage);
   }
 };
 
@@ -308,7 +315,14 @@ export const listImagesFromDrive = async (): Promise<
     return response.result.files || [];
   } catch (error: any) {
     console.error('[Drive/gapi] List failed:', error);
-    throw new Error(error.result?.error?.message || 'Failed to list files from Google Drive');
+    const errorMessage = error.result?.error?.message || error.message || 'Failed to list files from Google Drive';
+    const statusCode = error.status || error.result?.error?.code;
+
+    if (statusCode === 401) {
+      throw new Error('401: ' + errorMessage);
+    }
+
+    throw new Error(errorMessage);
   }
 };
 
