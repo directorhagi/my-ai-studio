@@ -5,7 +5,7 @@ import { Category, ClothingItem, AppState, AspectRatio, HistoryItem, StylePreset
 import { generateFittingImage, generateEditedImage, generateInpainting } from './services/geminiService';
 import { hasApiKey, saveApiKey, getMaskedApiKey, deleteApiKey } from './services/apiKeyStorage';
 import { onAuthStateChange, signInWithGoogle, signOut } from './services/authService';
-import { uploadImageToDrive, listImagesFromDrive, downloadImageFromDrive, deleteImageFromDrive } from './services/driveService';
+import { uploadImageToDrive, listImagesFromDrive, downloadImageFromDrive, downloadMetadataFromDrive, deleteImageFromDrive } from './services/driveService';
 import DropZone from './components/DropZone';
 import ApiKeyModal from './components/ApiKeyModal';
 
@@ -1291,37 +1291,42 @@ export const App: React.FC = () => {
             const blob = await downloadImageFromDrive(driveImage.id);
             const url = URL.createObjectURL(blob);
 
-            // Parse metadata from properties (values are JSON strings)
-            const props = driveImage.properties || {};
+            // Download metadata from companion .json file
+            const fullMetadata = await downloadMetadataFromDrive(driveImage.name);
 
-            // Helper to parse JSON strings or return original value
-            const parseValue = (val: string) => {
-                if (!val) return val;
-                try {
-                    return JSON.parse(val);
-                } catch {
-                    return val; // Return as-is if not valid JSON
-                }
-            };
+            // If no metadata file exists, fall back to basic info
+            if (!fullMetadata) {
+                return {
+                    id: driveImage.id,
+                    url: url,
+                    date: new Date(driveImage.createdTime).getTime(),
+                    type: 'FITTING',
+                    liked: false,
+                    metadata: {
+                        prompt: driveImage.description || '',
+                    }
+                };
+            }
 
             return {
                 id: driveImage.id,
                 url: url,
-                date: props.date ? parseInt(parseValue(props.date)) : new Date(driveImage.createdTime).getTime(),
-                type: (parseValue(props.type) as GenerationType) || 'FITTING',
-                preset: parseValue(props.preset),
-                view: parseValue(props.view),
-                size: parseValue(props.size),
+                date: fullMetadata.date || new Date(driveImage.createdTime).getTime(),
+                type: fullMetadata.type || 'FITTING',
+                preset: fullMetadata.preset,
+                view: fullMetadata.view,
+                size: fullMetadata.size,
                 liked: false,
                 metadata: {
-                    prompt: parseValue(props.prompt) || driveImage.description,
-                    fit: parseValue(props.fit),
-                    pose: parseValue(props.pose),
-                    background: parseValue(props.background),
-                    aspectRatio: parseValue(props.aspectRatio),
-                    modelName: parseValue(props.modelName),
-                    gender: parseValue(props.gender),
-                    seed: props.seed ? parseInt(parseValue(props.seed)) : undefined
+                    prompt: fullMetadata.prompt,
+                    fit: fullMetadata.fit,
+                    pose: fullMetadata.pose,
+                    background: fullMetadata.background,
+                    aspectRatio: fullMetadata.aspectRatio,
+                    modelName: fullMetadata.modelName,
+                    gender: fullMetadata.gender,
+                    seed: fullMetadata.seed,
+                    refImages: fullMetadata.refImages, // Now preserved!
                 }
             };
         } catch (error) {

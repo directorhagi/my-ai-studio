@@ -87,6 +87,7 @@ const getOrCreateAppFolder = async (): Promise<string> => {
 
 /**
  * Upload image to Google Drive using gapi
+ * Also uploads a companion .json file with full metadata
  */
 export const uploadImageToDrive = async (
   imageBlob: Blob,
@@ -106,23 +107,15 @@ export const uploadImageToDrive = async (
     // Get app folder
     const folderId = await getOrCreateAppFolder();
 
-    // Prepare file metadata
-    // Store all metadata except large objects like 'settings' (Drive has size limits)
-    const { settings, ...cleanMetadata } = metadata || {};
-
-    // Convert all values to strings for properties
-    const properties: { [key: string]: string } = {};
-    for (const [key, value] of Object.entries(cleanMetadata)) {
-      if (value !== undefined && value !== null) {
-        properties[key] = typeof value === 'string' ? value : JSON.stringify(value);
-      }
-    }
-
+    // Prepare file metadata (keep properties minimal)
     const fileMetadata = {
       name: fileName,
       parents: [folderId],
       description: metadata?.prompt || '',
-      properties: properties,
+      properties: {
+        hasMetadataFile: 'true',
+        uploadTime: new Date().toISOString(),
+      },
     };
 
     // Create form data for multipart upload
@@ -166,7 +159,60 @@ export const uploadImageToDrive = async (
       body: multipartRequestBody,
     });
 
-    console.log('[Drive/gapi] Upload complete:', response.result.name);
+    console.log('[Drive/gapi] Image upload complete:', response.result.name);
+
+    // Upload companion metadata JSON file
+    if (metadata) {
+      const metadataFileName = fileName.replace(/\.(png|jpg|jpeg|webp)$/i, '.json');
+      const metadataBlob = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
+
+      const metadataFileMetadata = {
+        name: metadataFileName,
+        parents: [folderId],
+        description: 'Metadata for ' + fileName,
+      };
+
+      const metadataBoundary = '-------314159265358979323846';
+      const metadataDelimiter = "\r\n--" + metadataBoundary + "\r\n";
+      const metadataCloseDelimiter = "\r\n--" + metadataBoundary + "--";
+
+      // Read metadata blob as base64
+      const metadataReader = new FileReader();
+      const metadataBase64Promise = new Promise<string>((resolve, reject) => {
+        metadataReader.onloadend = () => {
+          const base64 = (metadataReader.result as string).split(',')[1];
+          resolve(base64);
+        };
+        metadataReader.onerror = reject;
+        metadataReader.readAsDataURL(metadataBlob);
+      });
+
+      const metadataBase64Data = await metadataBase64Promise;
+
+      const metadataMultipartBody =
+        metadataDelimiter +
+        'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+        JSON.stringify(metadataFileMetadata) +
+        metadataDelimiter +
+        'Content-Type: application/json\r\n' +
+        'Content-Transfer-Encoding: base64\r\n\r\n' +
+        metadataBase64Data +
+        metadataCloseDelimiter;
+
+      await gapi.client.request({
+        path: '/upload/drive/v3/files',
+        method: 'POST',
+        params: {
+          uploadType: 'multipart',
+        },
+        headers: {
+          'Content-Type': `multipart/related; boundary=${metadataBoundary}`,
+        },
+        body: metadataMultipartBody,
+      });
+
+      console.log('[Drive/gapi] Metadata file upload complete:', metadataFileName);
+    }
 
     return {
       fileId: response.result.id,
@@ -179,7 +225,59 @@ export const uploadImageToDrive = async (
 };
 
 /**
+ * Download metadata JSON file from Google Drive
+ */
+export const downloadMetadataFromDrive = async (imageFileName: string): Promise<any> => {
+  try {
+    const token = getGoogleAccessToken();
+    if (!token) {
+      throw new Error('Not authenticated. Please sign in with Google.');
+    }
+
+    await initGapi();
+    setGapiToken();
+
+    // Get app folder
+    const folderId = await getOrCreateAppFolder();
+
+    // Find the metadata file
+    const metadataFileName = imageFileName.replace(/\.(png|jpg|jpeg|webp)$/i, '.json');
+    const response = await gapi.client.drive.files.list({
+      q: `name='${metadataFileName}' and '${folderId}' in parents and trashed=false`,
+      fields: 'files(id)',
+      spaces: 'drive',
+    });
+
+    if (!response.result.files || response.result.files.length === 0) {
+      console.log('[Drive] No metadata file found for:', imageFileName);
+      return null;
+    }
+
+    const metadataFileId = response.result.files[0].id!;
+
+    // Download the metadata file
+    const url = `https://www.googleapis.com/drive/v3/files/${metadataFileId}?alt=media`;
+    const fetchResponse = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${token}`,
+      },
+    });
+
+    if (!fetchResponse.ok) {
+      throw new Error(`Failed to download metadata: ${fetchResponse.statusText}`);
+    }
+
+    const metadataText = await fetchResponse.text();
+    return JSON.parse(metadataText);
+  } catch (error: any) {
+    console.error('[Drive] Failed to download metadata:', error);
+    return null; // Return null if metadata not found
+  }
+};
+
+/**
  * List images from Google Drive app folder
+ * Returns only image files (excludes .json metadata files)
  */
 export const listImagesFromDrive = async (): Promise<
   Array<{
@@ -199,9 +297,9 @@ export const listImagesFromDrive = async (): Promise<
     // Get app folder
     const folderId = await getOrCreateAppFolder();
 
-    // List files in app folder
+    // List files in app folder (exclude .json metadata files)
     const response = await gapi.client.drive.files.list({
-      q: `'${folderId}' in parents and trashed=false`,
+      q: `'${folderId}' in parents and trashed=false and not name contains '.json'`,
       fields: 'files(id,name,createdTime,thumbnailLink,webViewLink,description,properties)',
       orderBy: 'createdTime desc',
       spaces: 'drive',
@@ -245,17 +343,48 @@ export const downloadImageFromDrive = async (fileId: string): Promise<Blob> => {
 
 /**
  * Delete image from Google Drive
+ * Also deletes the companion metadata .json file
  */
 export const deleteImageFromDrive = async (fileId: string): Promise<void> => {
   try {
     await initGapi();
     setGapiToken();
 
+    // Get the filename first
+    const fileResponse = await gapi.client.drive.files.get({
+      fileId: fileId,
+      fields: 'name, parents',
+    });
+
+    const fileName = fileResponse.result.name;
+    const parents = fileResponse.result.parents || [];
+
+    // Delete the image file
     await gapi.client.drive.files.delete({
       fileId: fileId,
     });
 
-    console.log('[Drive/gapi] File deleted:', fileId);
+    console.log('[Drive/gapi] Image deleted:', fileName);
+
+    // Delete companion metadata file if exists
+    if (fileName && parents.length > 0) {
+      const metadataFileName = fileName.replace(/\.(png|jpg|jpeg|webp)$/i, '.json');
+      const folderId = parents[0];
+
+      const searchResponse = await gapi.client.drive.files.list({
+        q: `name='${metadataFileName}' and '${folderId}' in parents and trashed=false`,
+        fields: 'files(id)',
+        spaces: 'drive',
+      });
+
+      if (searchResponse.result.files && searchResponse.result.files.length > 0) {
+        const metadataFileId = searchResponse.result.files[0].id!;
+        await gapi.client.drive.files.delete({
+          fileId: metadataFileId,
+        });
+        console.log('[Drive/gapi] Metadata file deleted:', metadataFileName);
+      }
+    }
   } catch (error: any) {
     console.error('[Drive/gapi] Delete failed:', error);
     throw new Error(error.result?.error?.message || 'Failed to delete from Google Drive');
