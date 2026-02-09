@@ -1801,7 +1801,7 @@ export const App: React.FC = () => {
                 if (ctx) {
                     ctx.fillStyle = inpaintTool === 'eraser' ? 'black' : 'white';
                     ctx.beginPath();
-                    ctx.arc(x, y, brushSize, 0, Math.PI * 2);
+                    ctx.arc(x, y, brushSize / 2, 0, Math.PI * 2);
                     ctx.fill();
                 }
             }
@@ -1831,7 +1831,7 @@ export const App: React.FC = () => {
         if (cursorRef.current) {
             cursorRef.current.style.left = `${e.clientX}px`;
             cursorRef.current.style.top = `${e.clientY}px`;
-            const visualDiameter = (brushSize / scaleX) * 2;
+            const visualDiameter = brushSize / scaleX;
             cursorRef.current.style.width = `${visualDiameter}px`;
             cursorRef.current.style.height = `${visualDiameter}px`;
         }
@@ -1840,7 +1840,7 @@ export const App: React.FC = () => {
             const ctx = canvasRef.current.getContext('2d');
             if (ctx && lastDrawPos.current) {
                 ctx.strokeStyle = inpaintTool === 'eraser' ? 'black' : 'white';
-                ctx.lineWidth = brushSize * 2; 
+                ctx.lineWidth = brushSize;
                 ctx.lineCap = 'round';
                 ctx.lineJoin = 'round';
                 ctx.beginPath();
