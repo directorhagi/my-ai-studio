@@ -1461,6 +1461,9 @@ export const App: React.FC = () => {
     const [isDrawing, setIsDrawing] = useState(false);
     const [brushSize, setBrushSize] = useState(20);
     const [cursorMode, setCursorMode] = useState<'default' | 'grab' | 'grabbing'>('default');
+
+    // Library multi-select
+    const [selectedImages, setSelectedImages] = useState<Set<string>>(new Set());
     
     const lastDrawPos = useRef<{x: number, y: number} | null>(null);
 
@@ -1506,7 +1509,82 @@ export const App: React.FC = () => {
     const handleRouteToInpaint = (url: string) => {
         setInpaintBase(url);
         setCurrentPage('INPAINTING');
-        setDetailItem(null); 
+        setDetailItem(null);
+    };
+
+    // Library multi-select actions
+    const toggleImageSelection = (id: string) => {
+        setSelectedImages(prev => {
+            const newSet = new Set(prev);
+            if (newSet.has(id)) {
+                newSet.delete(id);
+            } else {
+                newSet.add(id);
+            }
+            return newSet;
+        });
+    };
+
+    const handleBulkDownload = async () => {
+        const selectedItems = history.filter(item => selectedImages.has(item.id));
+        for (const item of selectedItems) {
+            const a = document.createElement('a');
+            a.href = item.url;
+            a.download = `${item.type}_${item.date}.png`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        setSelectedImages(new Set());
+    };
+
+    const handleSendToEdit = () => {
+        const selectedItems = history.filter(item => selectedImages.has(item.id));
+        if (selectedItems.length > 0) {
+            setEditImage(selectedItems[0].url);
+            setEditResult(null);
+            setCurrentPage('EDIT_IMAGE');
+            setSelectedImages(new Set());
+        }
+    };
+
+    const handleSendToInpaint = () => {
+        const selectedItems = history.filter(item => selectedImages.has(item.id));
+        if (selectedItems.length > 0) {
+            setInpaintBase(selectedItems[0].url);
+            setInpaintResult(null);
+            setCurrentPage('INPAINTING');
+            setSelectedImages(new Set());
+        }
+    };
+
+    const handleAddToStudioRef = () => {
+        const selectedItems = history.filter(item => selectedImages.has(item.id));
+        const imageUrls = selectedItems.map(item => item.url);
+        setStudioState(prev => ({
+            ...prev,
+            refImages: [...prev.refImages, ...imageUrls]
+        }));
+        setCurrentPage('STUDIO');
+        setSelectedImages(new Set());
+    };
+
+    const handleBulkDelete = async () => {
+        if (!confirm(`${selectedImages.size}개의 이미지를 삭제하시겠습니까? Google Drive에서도 삭제됩니다.`)) {
+            return;
+        }
+        const idsToDelete = Array.from(selectedImages);
+        setHistory(prev => prev.filter(h => !selectedImages.has(h.id)));
+
+        for (const id of idsToDelete) {
+            try {
+                await deleteImageFromDrive(id);
+            } catch (error) {
+                console.error('Failed to delete from Drive:', error);
+            }
+        }
+        setSelectedImages(new Set());
     };
 
     useEffect(() => {
@@ -2229,41 +2307,39 @@ export const App: React.FC = () => {
                     )}
 
                     {currentPage === 'LIBRARY' && (
-                        <div className="w-full h-full overflow-y-auto custom-scrollbar p-0 pt-4 pb-10">
+                        <div className="w-full h-full overflow-y-auto custom-scrollbar p-0 pt-4 pb-24 relative">
                             <div className="flex flex-wrap content-start">
                                 {history.map(item => (
-                                    <div key={item.id} onClick={() => setDetailItem(item)} className="relative group overflow-hidden bg-black/20 border border-white/5 shadow-lg hover:border-indigo-500/50 transition-all cursor-pointer w-1/2 md:w-1/4 aspect-[3/4]">
-                                        <img src={item.url} className="w-full h-full object-cover" loading="lazy" />
-                                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-3">
-                                            <span className="text-[10px] text-white font-bold uppercase tracking-wider mb-1">{item.type}</span>
-                                            {item.metadata?.prompt && (
-                                                <span className="text-[8px] text-slate-300 mb-1 line-clamp-2">{item.metadata.prompt}</span>
-                                            )}
-                                            <span className="text-[8px] text-slate-400 font-mono">{new Date(item.date).toLocaleDateString()}</span>
+                                    <div
+                                        key={item.id}
+                                        className={`relative group overflow-hidden bg-black/20 border shadow-lg transition-all cursor-pointer w-1/2 md:w-1/4 aspect-[3/4] ${
+                                            selectedImages.has(item.id) ? 'border-indigo-500 ring-2 ring-indigo-500' : 'border-white/5 hover:border-indigo-500/50'
+                                        }`}
+                                    >
+                                        <div onClick={() => setDetailItem(item)} className="w-full h-full">
+                                            <img src={item.url} className="w-full h-full object-cover" loading="lazy" />
+                                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-3">
+                                                <span className="text-[10px] text-white font-bold uppercase tracking-wider mb-1">{item.type}</span>
+                                                {item.metadata?.prompt && (
+                                                    <span className="text-[8px] text-slate-300 mb-1 line-clamp-2">{item.metadata.prompt}</span>
+                                                )}
+                                                <span className="text-[8px] text-slate-400 font-mono">{new Date(item.date).toLocaleDateString()}</span>
+                                            </div>
+                                        </div>
+                                        <div className="absolute top-2 left-2 z-10">
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedImages.has(item.id)}
+                                                onChange={(e) => {
+                                                    e.stopPropagation();
+                                                    toggleImageSelection(item.id);
+                                                }}
+                                                className="w-5 h-5 rounded border-2 border-white/50 bg-black/50 checked:bg-indigo-600 checked:border-indigo-600 cursor-pointer"
+                                            />
                                         </div>
                                         <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                             <button onClick={(e) => { e.stopPropagation(); toggleLike(item.id); }} className={`w-6 h-6 rounded-full flex items-center justify-center backdrop-blur-md transition-all text-[10px] ${item.liked ? 'bg-pink-600 text-white' : 'bg-black/50 text-white/50 hover:text-white hover:bg-black/70'}`}><i className="fas fa-heart"></i></button>
                                             <button onClick={(e) => handleDownload(e, item.url)} className="w-6 h-6 rounded-full flex items-center justify-center backdrop-blur-md transition-all text-[10px] bg-black/50 text-white/50 hover:text-white hover:bg-black/70"><i className="fas fa-download"></i></button>
-                                            <button
-                                                onClick={async (e) => {
-                                                    e.stopPropagation();
-                                                    if (!confirm('이미지를 삭제하시겠습니까? Google Drive에서도 삭제됩니다.')) {
-                                                        return;
-                                                    }
-                                                    // Remove from local history
-                                                    setHistory(prev => prev.filter(h => h.id !== item.id));
-                                                    // Remove from Drive if exists
-                                                    try {
-                                                        await deleteImageFromDrive(item.id);
-                                                    } catch (error) {
-                                                        console.error('Failed to delete from Drive:', error);
-                                                    }
-                                                }}
-                                                className="w-6 h-6 rounded-full flex items-center justify-center backdrop-blur-md transition-all text-[10px] bg-black/50 text-white/50 hover:text-white hover:bg-red-600"
-                                                title="삭제"
-                                            >
-                                                <i className="fas fa-trash"></i>
-                                            </button>
                                         </div>
                                     </div>
                                 ))}
@@ -2276,6 +2352,64 @@ export const App: React.FC = () => {
                                     </div>
                                 )}
                             </div>
+
+                            {/* Floating Action Bar */}
+                            {selectedImages.size > 0 && (
+                                <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom duration-300">
+                                    <div className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-full shadow-2xl shadow-indigo-500/50 px-6 py-3 flex items-center gap-4">
+                                        <span className="text-white text-sm font-bold">{selectedImages.size}개 선택</span>
+                                        <div className="w-px h-6 bg-white/30"></div>
+                                        <button
+                                            onClick={handleBulkDownload}
+                                            className="flex items-center gap-2 px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-full text-white text-xs font-medium transition-all"
+                                            title="다운로드"
+                                        >
+                                            <i className="fas fa-download"></i>
+                                            <span>다운로드</span>
+                                        </button>
+                                        <button
+                                            onClick={handleSendToEdit}
+                                            className="flex items-center gap-2 px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-full text-white text-xs font-medium transition-all"
+                                            title="Edit로 보내기"
+                                        >
+                                            <i className="fas fa-edit"></i>
+                                            <span>Edit</span>
+                                        </button>
+                                        <button
+                                            onClick={handleSendToInpaint}
+                                            className="flex items-center gap-2 px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-full text-white text-xs font-medium transition-all"
+                                            title="Inpaint로 보내기"
+                                        >
+                                            <i className="fas fa-paint-brush"></i>
+                                            <span>Inpaint</span>
+                                        </button>
+                                        <button
+                                            onClick={handleAddToStudioRef}
+                                            className="flex items-center gap-2 px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-full text-white text-xs font-medium transition-all"
+                                            title="Studio 참조로 사용"
+                                        >
+                                            <i className="fas fa-image"></i>
+                                            <span>참조</span>
+                                        </button>
+                                        <div className="w-px h-6 bg-white/30"></div>
+                                        <button
+                                            onClick={handleBulkDelete}
+                                            className="flex items-center gap-2 px-3 py-1.5 bg-red-500/80 hover:bg-red-600 rounded-full text-white text-xs font-medium transition-all"
+                                            title="삭제"
+                                        >
+                                            <i className="fas fa-trash"></i>
+                                            <span>삭제</span>
+                                        </button>
+                                        <button
+                                            onClick={() => setSelectedImages(new Set())}
+                                            className="flex items-center justify-center w-8 h-8 bg-white/20 hover:bg-white/30 rounded-full text-white transition-all ml-2"
+                                            title="선택 취소"
+                                        >
+                                            <i className="fas fa-times"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
                 </main>
