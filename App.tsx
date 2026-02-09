@@ -923,10 +923,9 @@ const CommonHeader: React.FC<CommonHeaderProps> = ({ title, current, onNavigate,
           ) : user ? (
             <button
               onClick={handleLogout}
-              className="relative px-3 py-1.5 rounded-full text-[10px] font-medium tracking-wide cursor-pointer overflow-hidden group bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:shadow-md hover:shadow-indigo-500/30 transition-all duration-300"
+              className="px-3 py-1.5 rounded-lg text-[10px] font-medium text-slate-400 hover:text-white hover:bg-white/5 transition-all duration-200 border border-white/10 hover:border-white/20"
             >
-              <span className="relative z-10">로그아웃</span>
-              <div className="absolute inset-0 bg-gradient-to-r from-purple-500 to-pink-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+              로그아웃
             </button>
           ) : (
             <button
@@ -941,10 +940,9 @@ const CommonHeader: React.FC<CommonHeaderProps> = ({ title, current, onNavigate,
                   alert(error.message || '로그인에 실패했습니다.');
                 }
               }}
-              className="relative px-3 py-1.5 rounded-full text-[10px] font-medium tracking-wide cursor-pointer overflow-hidden group bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:shadow-md hover:shadow-indigo-500/30 transition-all duration-300"
+              className="px-3 py-1.5 rounded-lg text-[10px] font-medium text-white bg-white/10 hover:bg-white/15 transition-all duration-200 border border-white/20"
             >
-              <span className="relative z-10">로그인</span>
-              <div className="absolute inset-0 bg-gradient-to-r from-purple-500 to-pink-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+              로그인
             </button>
           )}
        </div>
@@ -987,10 +985,9 @@ const LandingPage: React.FC<{ onNavigate: (page: PageType) => void; t: any; user
                  {user ? (
                    <button
                      onClick={handleLogout}
-                     className="relative px-3 py-1.5 rounded-full text-[10px] font-medium tracking-wide cursor-pointer overflow-hidden group bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:shadow-md hover:shadow-indigo-500/30 transition-all duration-300"
+                     className="px-3 py-1.5 rounded-lg text-[10px] font-medium text-slate-400 hover:text-white hover:bg-white/5 transition-all duration-200 border border-white/10 hover:border-white/20"
                    >
-                     <span className="relative z-10">로그아웃</span>
-                     <div className="absolute inset-0 bg-gradient-to-r from-purple-500 to-pink-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                     로그아웃
                    </button>
                  ) : (
                    <button
@@ -1004,10 +1001,9 @@ const LandingPage: React.FC<{ onNavigate: (page: PageType) => void; t: any; user
                          alert(error.message || '로그인에 실패했습니다.');
                        }
                      }}
-                     className="relative px-3 py-1.5 rounded-full text-[10px] font-medium tracking-wide cursor-pointer overflow-hidden group bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:shadow-md hover:shadow-indigo-500/30 transition-all duration-300"
+                     className="px-3 py-1.5 rounded-lg text-[10px] font-medium text-white bg-white/10 hover:bg-white/15 transition-all duration-200 border border-white/20"
                    >
-                     <span className="relative z-10">로그인</span>
-                     <div className="absolute inset-0 bg-gradient-to-r from-purple-500 to-pink-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                     로그인
                    </button>
                  )}
              </div>
@@ -2356,15 +2352,21 @@ export const App: React.FC = () => {
                                             </div>
                                         </div>
                                         <div className="absolute top-2 left-2 z-10">
-                                            <input
-                                                type="checkbox"
-                                                checked={selectedImages.has(item.id)}
-                                                onChange={(e) => {
+                                            <button
+                                                onClick={(e) => {
                                                     e.stopPropagation();
                                                     toggleImageSelection(item.id);
                                                 }}
-                                                className="w-5 h-5 rounded border-2 border-white/50 bg-black/50 checked:bg-indigo-600 checked:border-indigo-600 cursor-pointer"
-                                            />
+                                                className={`w-5 h-5 rounded border transition-all ${
+                                                    selectedImages.has(item.id)
+                                                        ? 'bg-white border-white'
+                                                        : 'bg-black/30 border-white/40 hover:border-white/60 backdrop-blur-sm'
+                                                }`}
+                                            >
+                                                {selectedImages.has(item.id) && (
+                                                    <i className="fas fa-check text-black text-[10px]"></i>
+                                                )}
+                                            </button>
                                         </div>
                                         <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                             <button onClick={(e) => { e.stopPropagation(); toggleLike(item.id); }} className={`w-6 h-6 rounded-full flex items-center justify-center backdrop-blur-md transition-all text-[10px] ${item.liked ? 'bg-pink-600 text-white' : 'bg-black/50 text-white/50 hover:text-white hover:bg-black/70'}`}><i className="fas fa-heart"></i></button>
@@ -2384,57 +2386,57 @@ export const App: React.FC = () => {
 
                             {/* Floating Action Bar */}
                             {selectedImages.size > 0 && (
-                                <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom duration-300">
-                                    <div className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-full shadow-2xl shadow-indigo-500/50 px-6 py-3 flex items-center gap-4">
-                                        <span className="text-white text-sm font-bold">{selectedImages.size}개 선택</span>
-                                        <div className="w-px h-6 bg-white/30"></div>
+                                <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom duration-300">
+                                    <div className="bg-black/80 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl px-4 py-2.5 flex items-center gap-3">
+                                        <span className="text-white text-xs font-medium px-2">{selectedImages.size}개</span>
+                                        <div className="w-px h-5 bg-white/20"></div>
                                         <button
                                             onClick={handleBulkDownload}
-                                            className="flex items-center gap-2 px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-full text-white text-xs font-medium transition-all"
+                                            className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-white/10 rounded-lg text-slate-300 hover:text-white text-xs transition-all"
                                             title="다운로드"
                                         >
-                                            <i className="fas fa-download"></i>
+                                            <i className="fas fa-download text-[10px]"></i>
                                             <span>다운로드</span>
                                         </button>
                                         <button
                                             onClick={handleSendToEdit}
-                                            className="flex items-center gap-2 px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-full text-white text-xs font-medium transition-all"
+                                            className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-white/10 rounded-lg text-slate-300 hover:text-white text-xs transition-all"
                                             title="Edit로 보내기"
                                         >
-                                            <i className="fas fa-edit"></i>
+                                            <i className="fas fa-edit text-[10px]"></i>
                                             <span>Edit</span>
                                         </button>
                                         <button
                                             onClick={handleSendToInpaint}
-                                            className="flex items-center gap-2 px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-full text-white text-xs font-medium transition-all"
+                                            className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-white/10 rounded-lg text-slate-300 hover:text-white text-xs transition-all"
                                             title="Inpaint로 보내기"
                                         >
-                                            <i className="fas fa-paint-brush"></i>
+                                            <i className="fas fa-paint-brush text-[10px]"></i>
                                             <span>Inpaint</span>
                                         </button>
                                         <button
                                             onClick={handleAddToStudioRef}
-                                            className="flex items-center gap-2 px-3 py-1.5 bg-white/20 hover:bg-white/30 rounded-full text-white text-xs font-medium transition-all"
+                                            className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-white/10 rounded-lg text-slate-300 hover:text-white text-xs transition-all"
                                             title="Studio 참조로 사용"
                                         >
-                                            <i className="fas fa-image"></i>
+                                            <i className="fas fa-image text-[10px]"></i>
                                             <span>참조</span>
                                         </button>
-                                        <div className="w-px h-6 bg-white/30"></div>
+                                        <div className="w-px h-5 bg-white/20"></div>
                                         <button
                                             onClick={handleBulkDelete}
-                                            className="flex items-center gap-2 px-3 py-1.5 bg-red-500/80 hover:bg-red-600 rounded-full text-white text-xs font-medium transition-all"
+                                            className="flex items-center gap-1.5 px-2.5 py-1.5 hover:bg-red-500/20 rounded-lg text-red-400 hover:text-red-300 text-xs transition-all"
                                             title="삭제"
                                         >
-                                            <i className="fas fa-trash"></i>
+                                            <i className="fas fa-trash text-[10px]"></i>
                                             <span>삭제</span>
                                         </button>
                                         <button
                                             onClick={() => setSelectedImages(new Set())}
-                                            className="flex items-center justify-center w-8 h-8 bg-white/20 hover:bg-white/30 rounded-full text-white transition-all ml-2"
+                                            className="flex items-center justify-center w-7 h-7 hover:bg-white/10 rounded-lg text-slate-400 hover:text-white transition-all ml-1"
                                             title="선택 취소"
                                         >
-                                            <i className="fas fa-times"></i>
+                                            <i className="fas fa-times text-[10px]"></i>
                                         </button>
                                     </div>
                                 </div>
