@@ -923,7 +923,7 @@ const CommonHeader: React.FC<CommonHeaderProps> = ({ title, current, onNavigate,
           ) : user ? (
             <button
               onClick={handleLogout}
-              className="relative px-5 py-2 rounded-full text-xs font-bold uppercase tracking-wider cursor-pointer overflow-hidden group bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:shadow-lg hover:shadow-indigo-500/50 transition-all duration-300"
+              className="relative px-3 py-1.5 rounded-full text-[10px] font-medium tracking-wide cursor-pointer overflow-hidden group bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:shadow-md hover:shadow-indigo-500/30 transition-all duration-300"
             >
               <span className="relative z-10">로그아웃</span>
               <div className="absolute inset-0 bg-gradient-to-r from-purple-500 to-pink-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
@@ -941,7 +941,7 @@ const CommonHeader: React.FC<CommonHeaderProps> = ({ title, current, onNavigate,
                   alert(error.message || '로그인에 실패했습니다.');
                 }
               }}
-              className="relative px-5 py-2 rounded-full text-xs font-bold uppercase tracking-wider cursor-pointer overflow-hidden group bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:shadow-lg hover:shadow-indigo-500/50 transition-all duration-300"
+              className="relative px-3 py-1.5 rounded-full text-[10px] font-medium tracking-wide cursor-pointer overflow-hidden group bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:shadow-md hover:shadow-indigo-500/30 transition-all duration-300"
             >
               <span className="relative z-10">로그인</span>
               <div className="absolute inset-0 bg-gradient-to-r from-purple-500 to-pink-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
@@ -983,11 +983,11 @@ const LandingPage: React.FC<{ onNavigate: (page: PageType) => void; t: any; user
                     <span style={{ fontFamily: 'Inter, sans-serif' }} className="text-3xl font-normal tracking-tight opacity-90">MY AI STUDIO</span>
                  </span>
              </div>
-             <div className="absolute right-0 flex gap-3">
+             <div className="absolute right-0 flex gap-2">
                  {user ? (
                    <button
                      onClick={handleLogout}
-                     className="relative px-6 py-2.5 rounded-full text-xs font-bold uppercase tracking-wider cursor-pointer overflow-hidden group bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:shadow-lg hover:shadow-indigo-500/50 transition-all duration-300"
+                     className="relative px-3 py-1.5 rounded-full text-[10px] font-medium tracking-wide cursor-pointer overflow-hidden group bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:shadow-md hover:shadow-indigo-500/30 transition-all duration-300"
                    >
                      <span className="relative z-10">로그아웃</span>
                      <div className="absolute inset-0 bg-gradient-to-r from-purple-500 to-pink-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
@@ -1004,7 +1004,7 @@ const LandingPage: React.FC<{ onNavigate: (page: PageType) => void; t: any; user
                          alert(error.message || '로그인에 실패했습니다.');
                        }
                      }}
-                     className="relative px-6 py-2.5 rounded-full text-xs font-bold uppercase tracking-wider cursor-pointer overflow-hidden group bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:shadow-lg hover:shadow-indigo-500/50 transition-all duration-300"
+                     className="relative px-3 py-1.5 rounded-full text-[10px] font-medium tracking-wide cursor-pointer overflow-hidden group bg-gradient-to-r from-indigo-500 to-purple-500 text-white hover:shadow-md hover:shadow-indigo-500/30 transition-all duration-300"
                    >
                      <span className="relative z-10">로그인</span>
                      <div className="absolute inset-0 bg-gradient-to-r from-purple-500 to-pink-500 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
