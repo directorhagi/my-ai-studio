@@ -4,7 +4,7 @@ import { User } from 'firebase/auth';
 import { Category, ClothingItem, AppState, AspectRatio, HistoryItem, StylePreset, ImageSize, FitType, PoseType, BackgroundType, ClothingLength, GenderType, BatchItem } from './types';
 import { generateFittingImage, generateEditedImage, generateInpainting } from './services/geminiService';
 import { hasApiKey, saveApiKey, getMaskedApiKey, deleteApiKey } from './services/apiKeyStorage';
-import { onAuthStateChange, signInWithGoogle, signOut } from './services/authService';
+import { onAuthStateChange, signInWithGoogle, signOut, getGoogleAccessToken } from './services/authService';
 import { uploadImageToDrive, listImagesFromDrive, downloadImageFromDrive, downloadMetadataFromDrive, deleteImageFromDrive } from './services/driveService';
 import DropZone from './components/DropZone';
 import ApiKeyModal from './components/ApiKeyModal';
@@ -1343,6 +1343,26 @@ export const App: React.FC = () => {
     useEffect(() => {
         const loadDriveImages = async () => {
             if (user) {
+                // Wait for token to be available
+                let retries = 0;
+                const maxRetries = 5;
+
+                while (retries < maxRetries) {
+                    const token = getGoogleAccessToken();
+                    if (token) {
+                        break;
+                    }
+                    console.log('[Drive] Waiting for access token...', retries + 1);
+                    await new Promise(resolve => setTimeout(resolve, 300));
+                    retries++;
+                }
+
+                const token = getGoogleAccessToken();
+                if (!token) {
+                    console.error('[Drive] Access token not available after retries');
+                    return;
+                }
+
                 try {
                     console.log('[Drive] Loading images from Drive...');
                     const driveImages = await listImagesFromDrive();
