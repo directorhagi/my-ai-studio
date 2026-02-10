@@ -83,35 +83,28 @@ export const binarizeMask = (maskBase64: string): Promise<string> => {
   });
 };
 
-// Compute fill-scale for two shear transforms (horizontal + vertical).
-// Canvas transform chain: translate → scale(Fs) → shearX → skewY → zoom → draw
-// Inverse mapping for canvas corner (cx,cy):
-//   ty = cy - hh, tx = cx - hw (subtract translation)
-//   iy = ty - skewY*tx (inverse of vertical skew)
-//   ix = tx - shearX*iy (inverse of horizontal shear)
-//   Fs = max(|ix|/hw, |iy|/hh) across all 4 corners
-const computeFillScaleForShears = (w: number, h: number, shearX: number, skewY: number): number => {
-  const hw = w / 2, hh = h / 2;
-  const corners: [number, number][] = [[0, 0], [w, 0], [0, h], [w, h]];
-  let maxFs = 1;
-  for (const [cx, cy] of corners) {
-    const tx = cx - hw, ty = cy - hh;
-    const iy = ty - skewY * tx;
-    const ix = tx - shearX * iy;
-    maxFs = Math.max(maxFs, Math.abs(ix) / hw, Math.abs(iy) / hh);
-  }
-  return maxFs;
+// Compute fill-scale for Z-axis rotation to avoid black corners.
+// For angle θ, corners move outward by factor: (w*|cosθ| + h*|sinθ|)/w and (h*|cosθ| + w*|sinθ|)/h
+const computeFillScaleForRotation = (w: number, h: number, angleDeg: number): number => {
+  const rad = Math.abs(angleDeg) * Math.PI / 180;
+  const cos = Math.abs(Math.cos(rad));
+  const sin = Math.abs(Math.sin(rad));
+  return Math.max((w * cos + h * sin) / w, (h * cos + w * sin) / h);
 };
 
-// Apply zoom-only canvas transform before sending to AI.
-// Rotation and tilt are handled via text prompt to Gemini (3D perspective
-// cannot be reproduced with 2D canvas transforms — any shear/skew approach
-// causes visible distortion that users perceive as wrong).
+// Apply rotation, tilt, and zoom via CANVAS transforms.
+// Gemini text prompts for rotation/tilt don't work reliably, so we use direct canvas manipulation.
+// - Rotation: ctx.rotate (Z-axis - standard photo rotation)
+// - Tilt: vertical perspective skew via ctx.transform
+// - Zoom: ctx.scale
+// Fill-scale ensures no black corners appear.
 const applyGeometricTransforms = (
   base64: string,
+  rotation: number,
+  tilt: number,
   zoom: number
 ): Promise<string> => {
-  if (zoom === 0) return Promise.resolve(base64);
+  if (rotation === 0 && tilt === 0 && zoom === 0) return Promise.resolve(base64);
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
@@ -122,10 +115,42 @@ const applyGeometricTransforms = (
       canvas.height = h;
       const ctx = canvas.getContext('2d');
       if (!ctx) { resolve(base64); return; }
+
       ctx.save();
       ctx.translate(w / 2, h / 2);
-      const zoomScale = zoom > 0 ? 1 + zoom / 100 : 1 / (1 + Math.abs(zoom) / 100);
-      ctx.scale(zoomScale, zoomScale);
+
+      // 1. Compute fill-scale to avoid black corners from rotation
+      let fillScale = 1;
+      if (rotation !== 0) {
+        fillScale = computeFillScaleForRotation(w, h, rotation);
+      }
+      // Tilt adds slight vertical expansion need
+      if (tilt !== 0) {
+        const tiltFactor = 1 + Math.abs(tilt) / 200;
+        fillScale = Math.max(fillScale, tiltFactor);
+      }
+      if (fillScale > 1) {
+        ctx.scale(fillScale, fillScale);
+      }
+
+      // 2. Apply Z-axis rotation (standard photo rotation)
+      if (rotation !== 0) {
+        ctx.rotate((rotation * Math.PI) / 180);
+      }
+
+      // 3. Apply tilt as vertical skew: ctx.transform(1, skewY, 0, 1, 0, 0)
+      // Positive tilt = camera looks up = top of image compresses, bottom expands
+      if (tilt !== 0) {
+        const skewY = Math.tan((tilt * Math.PI) / 180) * 0.15;
+        ctx.transform(1, skewY, 0, 1, 0, 0);
+      }
+
+      // 4. Apply user zoom
+      if (zoom !== 0) {
+        const zoomScale = zoom > 0 ? 1 + zoom / 100 : 1 / (1 + Math.abs(zoom) / 100);
+        ctx.scale(zoomScale, zoomScale);
+      }
+
       ctx.drawImage(img, -w / 2, -h / 2, w, h);
       ctx.restore();
       resolve(canvas.toDataURL('image/png'));
@@ -537,8 +562,9 @@ export const generateEditedImage = async (
   const ai = getGenAI();
   const finalSeed = resolveSeed(seed);
   const detectedAspectRatio = await detectAspectRatio(imageBase64);
-  // Only zoom is applied via canvas. Rotation/tilt go to the AI prompt.
-  const transformedBase = await applyGeometricTransforms(imageBase64, params.zoom);
+  // Apply ALL geometric transforms via canvas (rotation, tilt, zoom)
+  // Gemini text prompts for rotation/tilt are unreliable, so canvas is the only guaranteed method
+  const transformedBase = await applyGeometricTransforms(imageBase64, params.rotation, params.tilt, params.zoom);
   const optimizedBase = await optimizeImage(transformedBase);
 
   const parts: any[] = [
@@ -568,60 +594,33 @@ export const generateEditedImage = async (
     }
   }
 
+  // Rotation and tilt are already applied via canvas transforms above.
+  // Gemini prompt only handles: lighting, shadow, relighting, user request.
   const lightingDesc = params.lighting < 30 ? "Low-key, very dark and moody" : params.lighting > 70 ? "High-key, bright and airy commercial" : "Balanced neutral studio";
   const shadowDesc = params.shadow < 30 ? "Extremely soft and diffused, almost shadowless" : params.shadow > 70 ? "Hard, dramatic, high-contrast shadows" : "Natural soft shadows";
 
-  // Build rotation/tilt instructions for Gemini
-  // Key: say "CAMERA ANGLE" not "turn the subject" — avoids Gemini only rotating the face
-  let rotationInstruction = '';
-  if (params.rotation !== 0) {
-    const deg = Math.abs(params.rotation);
-    const dir = params.rotation > 0 ? 'right' : 'left';
-    const opposite = params.rotation > 0 ? 'left' : 'right';
-    const viewDesc = deg < 20 ? `a very slight ${dir}-angle view` :
-                     deg < 45 ? `a 3/4 view showing the ${dir} side` :
-                     deg < 80 ? `a strong ${dir}-side angle` :
-                     `a ${dir} profile view`;
-    rotationInstruction = `- CAMERA ANGLE (HORIZONTAL): Re-shoot this fashion photo from ${deg}° to the ${dir}.
-  * The camera moves ${deg}° to the ${dir} of the subject.
-  * Result: show MORE of the subject's ${dir} shoulder/side, LESS of their ${opposite} side.
-  * This affects the ENTIRE BODY equally — torso, arms, clothing, legs, feet all show ${viewDesc}.
-  * NOT just the face — this is a FULL BODY perspective/angle change.
-  * Keep the same outfit, background, and lighting. Only the viewing angle changes.`;
-  }
-  let tiltInstruction = '';
-  if (params.tilt !== 0) {
-    const deg = Math.abs(params.tilt);
-    const dir = params.tilt > 0 ? 'upward' : 'downward';
-    const shot = params.tilt > 0 ? 'low-angle shot (camera below subject, looking up)' : 'high-angle shot (camera above subject, looking down)';
-    tiltInstruction = `- CAMERA ANGLE (VERTICAL): Re-shoot from ${deg}° ${dir} — ${shot}.
-  * The ENTIRE BODY reflects this camera tilt, not just the head.`;
-  }
-
   const lightingChanged = params.lighting !== 50;
   const shadowChanged = params.shadow !== 50;
-  const hasChanges = lightingChanged || shadowChanged || params.relighting || params.rotation !== 0 || params.tilt !== 0 || userPrompt.trim();
+  const hasAppearanceChanges = lightingChanged || shadowChanged || params.relighting || userPrompt.trim();
 
   const prompt = `
-    [ROLE: PROFESSIONAL FASHION PHOTOGRAPHER & PHOTO EDITOR]
+    [ROLE: PROFESSIONAL PHOTO EDITOR]
 
-    TASK: Recreate this fashion photo with the following changes applied.
+    TASK: Edit this fashion photo. The geometric transforms (rotation, tilt, zoom) have already been applied to the image. Your job is to enhance the APPEARANCE only.
 
     INPUT MAPPING:
     ${inputMap}
 
-    CHANGES TO APPLY:
-    ${rotationInstruction || '- CAMERA ANGLE (HORIZONTAL): Keep current front-facing angle.'}
-    ${tiltInstruction || '- CAMERA ANGLE (VERTICAL): Keep current camera height.'}
-    ${lightingChanged ? `- LIGHTING: ${lightingDesc} (${params.lighting}/100). Must be clearly visible.` : '- LIGHTING: Keep current lighting.'}
-    ${shadowChanged ? `- SHADOWS: ${shadowDesc} (${params.shadow}/100). Must be clearly visible.` : '- SHADOWS: Keep current shadows.'}
-    ${params.relighting ? '- RELIGHTING: Apply professional 3-point studio relighting.' : ''}
-    ${userPrompt.trim() ? `- USER REQUEST (TOP PRIORITY): "${userPrompt}" — Apply this EXACTLY and CLEARLY.` : ''}
+    APPEARANCE ADJUSTMENTS:
+    ${lightingChanged ? `- LIGHTING: Change to ${lightingDesc} (${params.lighting}/100). Make it CLEARLY visible.` : '- LIGHTING: Keep as-is.'}
+    ${shadowChanged ? `- SHADOWS: Change to ${shadowDesc} (${params.shadow}/100). Make it CLEARLY visible.` : '- SHADOWS: Keep as-is.'}
+    ${params.relighting ? '- RELIGHTING: Apply professional 3-point studio relighting for depth and separation.' : ''}
+    ${userPrompt.trim() ? `- USER REQUEST (HIGHEST PRIORITY): "${userPrompt}" — Apply EXACTLY as described.` : ''}
 
     OUTPUT REQUIREMENTS:
-    - ${hasChanges ? 'ALL changes MUST be clearly visible. Be decisive — do not be subtle.' : 'Output a clean, high-quality version of the input.'}
-    - Preserve the exact same clothing, outfit details, and model identity.
-    - Photorealistic. No artifacts. Output the COMPLETE image.
+    - ${hasAppearanceChanges ? 'Make ALL requested changes clearly visible.' : 'Output a clean, high-quality version.'}
+    - Preserve subject identity, clothing, and composition.
+    - Photorealistic output.
   `;
 
   parts.push({ text: prompt });
@@ -657,126 +656,44 @@ export const generateEditedImage = async (
   }
 };
 
-// Crop the masked region from the original image (with padding).
-// Returns the cropped image and its position in the original.
-const cropMaskedRegion = (
-  imageBase64: string,
-  maskBase64: string,
-  padding = 60
-): Promise<{ cropBase64: string; x: number; y: number; cropW: number; cropH: number; origW: number; origH: number } | null> => {
+// Get location description from mask (for prompt)
+const getMaskLocation = (maskBase64: string): Promise<string> => {
   return new Promise((resolve) => {
-    let loaded = 0;
-    const origImg = new Image();
-    const maskImg = new Image();
-    const onLoad = () => {
-      loaded++;
-      if (loaded < 2) return;
-      const W = origImg.naturalWidth || origImg.width;
-      const H = origImg.naturalHeight || origImg.height;
-      // Find bounding box of white pixels in mask
-      const mc = document.createElement('canvas');
-      mc.width = W; mc.height = H;
-      const mctx = mc.getContext('2d');
-      if (!mctx) { resolve(null); return; }
-      mctx.drawImage(maskImg, 0, 0, W, H);
-      const mdata = mctx.getImageData(0, 0, W, H).data;
-      let minX = W, minY = H, maxX = 0, maxY = 0, hasWhite = false;
+    const img = new Image();
+    img.onload = () => {
+      const W = img.naturalWidth || img.width;
+      const H = img.naturalHeight || img.height;
+      const c = document.createElement('canvas');
+      c.width = W; c.height = H;
+      const ctx = c.getContext('2d');
+      if (!ctx) { resolve('the selected area'); return; }
+      ctx.drawImage(img, 0, 0);
+      const d = ctx.getImageData(0, 0, W, H).data;
+      let minX = W, minY = H, maxX = 0, maxY = 0, found = false;
       for (let y = 0; y < H; y++) {
         for (let x = 0; x < W; x++) {
-          if (mdata[(y * W + x) * 4] > 128) {
-            if (x < minX) minX = x; if (x > maxX) maxX = x;
-            if (y < minY) minY = y; if (y > maxY) maxY = y;
-            hasWhite = true;
+          if (d[(y * W + x) * 4] > 128) {
+            minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+            minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+            found = true;
           }
         }
       }
-      if (!hasWhite) { resolve(null); return; }
-      // Add padding and clamp to image bounds
-      const x = Math.max(0, minX - padding);
-      const y = Math.max(0, minY - padding);
-      const x2 = Math.min(W, maxX + padding);
-      const y2 = Math.min(H, maxY + padding);
-      const cropW = x2 - x;
-      const cropH = y2 - y;
-      // Crop from original
-      const cc = document.createElement('canvas');
-      cc.width = cropW; cc.height = cropH;
-      const cctx = cc.getContext('2d');
-      if (!cctx) { resolve(null); return; }
-      cctx.drawImage(origImg, x, y, cropW, cropH, 0, 0, cropW, cropH);
-      resolve({ cropBase64: cc.toDataURL('image/png'), x, y, cropW, cropH, origW: W, origH: H });
+      if (!found) { resolve('the main subject'); return; }
+      const cx = (minX + maxX) / 2 / W;
+      const cy = (minY + maxY) / 2 / H;
+      const h = cy < 0.33 ? 'top' : cy > 0.66 ? 'bottom' : 'middle';
+      const v = cx < 0.33 ? 'left' : cx > 0.66 ? 'right' : 'center';
+      resolve(`the ${h}-${v} area`);
     };
-    origImg.onload = onLoad;
-    maskImg.onload = onLoad;
-    origImg.onerror = () => resolve(null);
-    maskImg.onerror = () => resolve(null);
-    origImg.src = imageBase64;
-    maskImg.src = maskBase64;
-  });
-};
-
-// Paste the edited crop back into the original image, using the mask for blending.
-const pasteCropIntoOriginal = (
-  originalBase64: string,
-  editedCropBase64: string,
-  maskBase64: string,
-  x: number, y: number, cropW: number, cropH: number
-): Promise<string> => {
-  return new Promise((resolve) => {
-    let loaded = 0;
-    const origImg = new Image();
-    const cropImg = new Image();
-    const maskImg = new Image();
-    const onLoad = () => {
-      loaded++;
-      if (loaded < 3) return;
-      const W = origImg.naturalWidth || origImg.width;
-      const H = origImg.naturalHeight || origImg.height;
-      const canvas = document.createElement('canvas');
-      canvas.width = W; canvas.height = H;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) { resolve(editedCropBase64); return; }
-      // Draw original
-      ctx.drawImage(origImg, 0, 0, W, H);
-      const origData = ctx.getImageData(0, 0, W, H);
-      // Draw scaled edited crop into the crop region
-      ctx.clearRect(0, 0, W, H);
-      ctx.drawImage(origImg, 0, 0, W, H);
-      ctx.drawImage(cropImg, x, y, cropW, cropH);
-      const composited = ctx.getImageData(0, 0, W, H);
-      // Apply mask blending: white mask = use composited, black mask = use original
-      ctx.clearRect(0, 0, W, H);
-      ctx.drawImage(maskImg, 0, 0, W, H);
-      const maskData = ctx.getImageData(0, 0, W, H);
-      const out = ctx.createImageData(W, H);
-      for (let i = 0; i < out.data.length; i += 4) {
-        const m = maskData.data[i] / 255;
-        out.data[i]     = Math.round(origData.data[i]     * (1 - m) + composited.data[i]     * m);
-        out.data[i + 1] = Math.round(origData.data[i + 1] * (1 - m) + composited.data[i + 1] * m);
-        out.data[i + 2] = Math.round(origData.data[i + 2] * (1 - m) + composited.data[i + 2] * m);
-        out.data[i + 3] = 255;
-      }
-      ctx.putImageData(out, 0, 0);
-      resolve(canvas.toDataURL('image/png'));
-    };
-    origImg.onload = onLoad; cropImg.onload = onLoad; maskImg.onload = onLoad;
-    origImg.onerror = () => resolve(originalBase64);
-    cropImg.onerror = () => resolve(originalBase64);
-    maskImg.onerror = () => resolve(originalBase64);
-    origImg.src = originalBase64;
-    cropImg.src = editedCropBase64;
-    maskImg.src = maskBase64;
+    img.onerror = () => resolve('the selected area');
+    img.src = maskBase64;
   });
 };
 
 // --- Main inpainting function ---
-// Strategy: CROP the masked region → send ONLY the crop to Gemini → paste result
-// back at the exact original position using mask blending.
-//
-// Why cropping works:
-// - Gemini sees only the selected object (e.g., shoes) at close range
-// - It can't place the result in the wrong location (the crop IS the location)
-// - Avoids "slippers appearing on the wall" type errors from full-image approach
+// SIMPLEST APPROACH: Send original with red mask overlay → Gemini edits → return full output
+// No cropping, no compositing — just direct Gemini generation
 export const generateInpainting = async (
   imageBase64: string,
   maskBase64: string,
@@ -784,22 +701,20 @@ export const generateInpainting = async (
   refImages: string[] = [],
   modelId: string,
   seed?: number
-): Promise<{ imageUrl: string, seed: number; cropInfo?: { x: number; y: number; cropW: number; cropH: number } }> => {
+): Promise<{ imageUrl: string, seed: number }> => {
   const ai = getGenAI();
   const finalSeed = resolveSeed(seed);
 
-  const instruction = userPrompt?.trim() || 'Enhance and improve naturally.';
+  const instruction = userPrompt?.trim() || 'enhance and improve this area';
+  const location = await getMaskLocation(maskBase64);
 
-  // 1. Crop the masked region
-  const cropData = await cropMaskedRegion(imageBase64, maskBase64, 60);
-  if (!cropData) throw new Error('마스크 영역을 인식할 수 없습니다. 편집할 영역을 브러시로 그린 후 다시 시도해주세요.');
-
-  const { cropBase64, x, y, cropW, cropH } = cropData;
-  const cropAR = await detectAspectRatio(cropBase64);
-  const optimizedCrop = await optimizeImage(cropBase64, 768);
+  // Create image with red overlay showing the mask
+  const maskedPreview = await createMaskedPreview(imageBase64, maskBase64);
+  const optimized = await optimizeImage(maskedPreview);
+  const detectedAR = await detectAspectRatio(imageBase64);
 
   const parts: any[] = [
-    { inlineData: { data: optimizedCrop.split(',')[1], mimeType: getMimeType(optimizedCrop) } }
+    { inlineData: { data: optimized.split(',')[1], mimeType: getMimeType(optimized) } }
   ];
 
   for (const ref of refImages) {
@@ -809,18 +724,17 @@ export const generateInpainting = async (
     }
   }
 
-  // 2. Ask Gemini to edit only the crop
-  const prompt = `You are editing a CROPPED SECTION from a fashion photo.
+  // Very direct, simple prompt
+  const prompt = `Edit this fashion photo.
 
-This image shows a specific area that needs to be modified.
+The RED/PINK tinted area (in ${location}) needs to be changed.
 
-YOUR TASK: "${instruction}"
+INSTRUCTION: ${instruction}
 
-CRITICAL RULES:
-1. This is a CROP — output must match the SAME framing, scale, and position as the input.
-2. Apply "${instruction}" clearly and decisively to the content shown.
-3. Keep background, lighting, and surroundings consistent.
-4. Do NOT reframe, zoom, or change the composition — output must fit back into the original photo.${refImages.length > 0 ? '\n5. Use the reference image for style guidance.' : ''}`;
+Rules:
+1. Apply "${instruction}" to the RED/PINK highlighted area. Make the change OBVIOUS and CLEAR.
+2. Keep everything else in the photo exactly the same.
+3. Output the complete edited photo.`;
 
   parts.push({ text: prompt });
 
@@ -828,25 +742,22 @@ CRITICAL RULES:
     const response = await retryOperation(() => ai.models.generateContent({
       model: modelId || 'gemini-3-pro-image-preview',
       contents: { parts },
-      config: { seed: finalSeed, imageConfig: { aspectRatio: cropAR } }
+      config: { seed: finalSeed, imageConfig: { aspectRatio: detectedAR } }
     })) as GenerateContentResponse;
 
-    let editedCropBase64 = '';
+    let resultBase64 = '';
     const candidate = response.candidates?.[0];
     if (candidate?.content?.parts) {
       for (const part of candidate.content.parts) {
         if (part.inlineData) {
-          editedCropBase64 = `data:image/png;base64,${part.inlineData.data}`;
+          resultBase64 = `data:image/png;base64,${part.inlineData.data}`;
           break;
         }
       }
     }
 
-    if (!editedCropBase64) throw new Error('인페인팅 실패 — AI가 이미지를 반환하지 않았습니다. API 키를 확인하고 다시 시도해주세요.');
-
-    // 3. Paste the edited crop back into the original at the exact crop position
-    const finalImage = await pasteCropIntoOriginal(imageBase64, editedCropBase64, maskBase64, x, y, cropW, cropH);
-    return { imageUrl: finalImage, seed: finalSeed, cropInfo: { x, y, cropW, cropH } };
+    if (!resultBase64) throw new Error('인페인팅 실패 — AI가 이미지를 반환하지 않았습니다.');
+    return { imageUrl: resultBase64, seed: finalSeed };
 
   } catch (error: any) {
     console.error('Gemini Inpainting Error:', error);
