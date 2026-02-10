@@ -477,29 +477,31 @@ export const generateEditedImage = async (
   const shadowDesc = params.shadow < 30 ? "Soft, diffused shadows" : params.shadow > 70 ? "Hard, dramatic shadows" : "Natural shadows";
   const relightingDesc = params.relighting ? "Apply professional relighting to enhance dimensionality and separation." : "Maintain existing lighting direction.";
 
+  const hasChanges = params.rotation !== 0 || params.tilt !== 0 || params.zoom !== 0 ||
+    params.lighting !== 50 || params.shadow !== 50 || params.relighting || userPrompt.trim();
+
   const prompt = `
-    [ROLE: PROFESSIONAL IMAGE RETOUCHER]
-    
-    TASK: Edit the provided image based on specific technical parameters.
-    
+    [ROLE: PROFESSIONAL PHOTO EDITOR & RETOUCHER]
+
+    TASK: Apply the following specific edits to IMAGE 1. You MUST visibly apply ALL non-zero parameters.
+
     INPUT MAPPING:
     ${inputMap}
 
-    PARAMETERS:
-    - VIEWPOINT: ${angleDesc}
-    - ZOOM/CROP: ${zoomDesc}
-    - LIGHTING INTENSITY: ${params.lighting}/100. ${lightingDesc}.
-    - SHADOW DENSITY: ${params.shadow}/100. ${shadowDesc}.
+    EDITS TO APPLY (apply ALL of these):
+    ${params.rotation !== 0 ? `- CAMERA ROTATION: ${angleDesc} — YOU MUST rotate/shift the camera angle by exactly ${params.rotation} degrees horizontally.` : '- CAMERA ROTATION: 0° (no change needed)'}
+    ${params.tilt !== 0 ? `- CAMERA TILT: ${params.tilt > 0 ? 'Tilt camera UP' : 'Tilt camera DOWN'} by ${Math.abs(params.tilt)} degrees. This must be VISIBLE in the output.` : '- CAMERA TILT: 0° (no change needed)'}
+    - ZOOM: ${zoomDesc}
+    - LIGHTING: ${params.lighting}/100 — ${lightingDesc}. ${params.lighting !== 50 ? 'This MUST be noticeably different from the original.' : ''}
+    - SHADOWS: ${params.shadow}/100 — ${shadowDesc}. ${params.shadow !== 50 ? 'This MUST be noticeably different from the original.' : ''}
     - RELIGHTING: ${relightingDesc}
-    
-    USER INSTRUCTION: ${userPrompt}
-    
-    OUTPUT:
-    - **PHOTOREALISTIC LIGHTING**: Ensure the subject's lighting matches the environment perfectly.
-    - **NATURAL BLENDING**: No artifacts or "cut-out" look. 
-    - Maintain high fidelity and resolution.
-    - Adjust perspective according to the rotation/tilt/zoom values.
-    - IMPORTANT: Respect the requested aspect ratio.
+    ${userPrompt.trim() ? `- USER REQUEST: "${userPrompt}" — Apply this EXACTLY as described.` : ''}
+
+    REQUIREMENTS:
+    - Apply EVERY non-default parameter visibly and confidently. Do not be subtle.
+    - Photorealistic result — no artifacts, no cut-out look.
+    - Maintain subject identity and clothing details.
+    - ${hasChanges ? 'The output MUST look noticeably different from the input.' : 'Maintain original look.'}
   `;
 
   parts.push({ text: prompt });
@@ -511,7 +513,7 @@ export const generateEditedImage = async (
       config: {
         seed: finalSeed,
         imageConfig: {
-          aspectRatio: detectedAspectRatio,
+          aspectRatio: aspectRatio || detectedAspectRatio,
         }
       }
     })) as GenerateContentResponse;
@@ -586,22 +588,26 @@ export const generateInpainting = async (
   }
 
   const prompt = `
-    [ROLE: EXPERT PHOTO RETOUCHER & INPAINTER]
-    
-    TASK: Modify the specific area of the image designated by the mask.
-    
+    [ROLE: EXPERT PHOTO RETOUCHER & PRECISION INPAINTER]
+
+    TASK: Surgically modify ONLY the masked region of the image. Every pixel outside the mask MUST remain pixel-perfect identical to the original.
+
     INPUT MAPPING:
     ${inputMap}
-    
-    INSTRUCTION: ${userPrompt}
-    
-    GUIDELINES:
-    - **SEAMLESS COMPOSITING**: The generated content MUST blend perfectly with the surrounding pixels.
-    - **MATCH LIGHTING**: Match the direction, color, and hardness of the light in the original image.
-    - **MATCH NOISE/GRAIN**: Ensure the texture matches the source.
-    - Only modify the masked area (indicated by white in Image 2). Do not alter the rest of the image.
-    - If reference images are provided, use them to guide what is generated inside the mask.
-    - High quality, photorealistic output.
+
+    MASK INTERPRETATION:
+    - Image 2 is a binary mask: WHITE pixels = the region to modify, BLACK pixels = preserve exactly.
+    - CRITICAL: Treat the white region as a precise surgical selection. Only generate/replace content inside white areas.
+    - If multiple similar objects exist (e.g., two lights, two chairs), ONLY modify the one(s) overlapping the white mask. Leave all others UNCHANGED.
+
+    EDIT INSTRUCTION: ${userPrompt}
+
+    STRICT REQUIREMENTS:
+    1. ALL black-mask pixels in the output MUST be IDENTICAL to IMAGE 1 — no color shift, no lighting change, no blur.
+    2. The white-mask region should seamlessly blend with surrounding pixels (match lighting, color temperature, texture, noise).
+    3. The boundary between masked and unmasked areas must be invisible (feathered compositing).
+    4. ${refImages.length > 0 ? 'Use the reference image(s) to guide the style/content inside the masked area.' : 'Apply the instruction naturally and realistically inside the mask.'}
+    5. Output must be photorealistic and high-fidelity.
   `;
 
   parts.push({ text: prompt });
@@ -635,4 +641,73 @@ export const generateInpainting = async (
     console.error("Gemini Inpainting Error:", error);
     throw error;
   }
+};
+
+/**
+ * Composite inpaint result with original image using the mask.
+ * White mask pixels → use result. Black mask pixels → use original.
+ * Guarantees pixel-perfect preservation of non-masked areas.
+ */
+export const compositeMaskResult = (
+  originalBase64: string,
+  resultBase64: string,
+  maskBase64: string
+): Promise<string> => {
+  return new Promise((resolve) => {
+    let loaded = 0;
+    const origImg = new Image();
+    const resultImg = new Image();
+    const maskImg = new Image();
+
+    const onLoad = () => {
+      loaded++;
+      if (loaded < 3) return;
+
+      const w = origImg.naturalWidth || origImg.width;
+      const h = origImg.naturalHeight || origImg.height;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { resolve(resultBase64); return; }
+
+      // Draw original → get pixel data
+      ctx.drawImage(origImg, 0, 0, w, h);
+      const origData = ctx.getImageData(0, 0, w, h);
+
+      // Draw result (scaled to original size) → get pixel data
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(resultImg, 0, 0, w, h);
+      const resData = ctx.getImageData(0, 0, w, h);
+
+      // Draw mask (scaled to original size) → get pixel data
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(maskImg, 0, 0, w, h);
+      const maskData = ctx.getImageData(0, 0, w, h);
+
+      // Composite: blend based on mask brightness
+      const out = ctx.createImageData(w, h);
+      for (let i = 0; i < out.data.length; i += 4) {
+        const m = maskData.data[i] / 255; // 0=original, 1=result
+        out.data[i]     = Math.round(origData.data[i]     * (1 - m) + resData.data[i]     * m);
+        out.data[i + 1] = Math.round(origData.data[i + 1] * (1 - m) + resData.data[i + 1] * m);
+        out.data[i + 2] = Math.round(origData.data[i + 2] * (1 - m) + resData.data[i + 2] * m);
+        out.data[i + 3] = 255;
+      }
+      ctx.putImageData(out, 0, 0);
+      resolve(canvas.toDataURL('image/png'));
+    };
+
+    origImg.onload = onLoad;
+    resultImg.onload = onLoad;
+    maskImg.onload = onLoad;
+    origImg.onerror = () => resolve(resultBase64);
+    resultImg.onerror = () => resolve(resultBase64);
+    maskImg.onerror = () => resolve(resultBase64);
+
+    origImg.src = originalBase64;
+    resultImg.src = resultBase64;
+    maskImg.src = maskBase64;
+  });
 };

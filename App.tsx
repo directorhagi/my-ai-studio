@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { User } from 'firebase/auth';
 import { Category, ClothingItem, AppState, AspectRatio, HistoryItem, StylePreset, ImageSize, FitType, PoseType, BackgroundType, ClothingLength, GenderType, BatchItem } from './types';
-import { generateFittingImage, generateEditedImage, generateInpainting } from './services/geminiService';
+import { generateFittingImage, generateEditedImage, generateInpainting, compositeMaskResult } from './services/geminiService';
 import { hasApiKey, saveApiKey, getMaskedApiKey, deleteApiKey } from './services/apiKeyStorage';
 import { onAuthStateChange, signInWithGoogle, signOut, getGoogleAccessToken } from './services/authService';
 import { uploadImageToDrive, listImagesFromDrive, downloadImageFromDrive, downloadMetadataFromDrive, deleteImageFromDrive } from './services/driveService';
@@ -1497,7 +1497,7 @@ export const App: React.FC = () => {
     const [inpaintResult, setInpaintResult] = useState<string | null>(null);
     const [isInpainting, setIsInpainting] = useState(false);
     const [inpaintRefImages, setInpaintRefImages] = useState<string[]>([]);
-    const [inpaintTool, setInpaintTool] = useState<'brush' | 'eraser'>('brush');
+    const [inpaintTool, setInpaintTool] = useState<'brush' | 'eraser' | 'fill'>('brush');
     const [inpaintResultItems, setInpaintResultItems] = useState<HistoryItem[]>([]);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const cursorRef = useRef<HTMLDivElement>(null);
@@ -1872,10 +1872,12 @@ export const App: React.FC = () => {
             const seedToUse = studioState.useRandomSeed ? undefined : studioState.seed;
             const mask = canvasRef.current.toDataURL('image/png');
             const result = await generateInpainting(inpaintBase, mask, inpaintPrompt, inpaintRefImages, studioState.selectedModel, seedToUse);
-            setInpaintResult(result.imageUrl);
+            // Composite result with original — preserves all non-masked pixels exactly
+            const composited = await compositeMaskResult(inpaintBase, result.imageUrl, mask);
+            setInpaintResult(composited);
 
             const newItem: HistoryItem = {
-                id: Date.now().toString(), url: result.imageUrl, date: Date.now(), type: 'INPAINTING', liked: false,
+                id: Date.now().toString(), url: composited, date: Date.now(), type: 'INPAINTING', liked: false,
                 metadata: {
                     prompt: inpaintPrompt,
                     refImages: inpaintRefImages,
@@ -1919,6 +1921,42 @@ export const App: React.FC = () => {
         inpaintHistoryStep.current = newHistory.length - 1;
     };
 
+    // Flood fill (paint bucket) — fills contiguous same-color region
+    const floodFill = (canvas: HTMLCanvasElement, startX: number, startY: number, fillWhite: boolean) => {
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        const w = canvas.width;
+        const h = canvas.height;
+        const imageData = ctx.getImageData(0, 0, w, h);
+        const data = imageData.data;
+        const si = (Math.floor(startY) * w + Math.floor(startX)) * 4;
+        const targetR = data[si], targetG = data[si + 1], targetB = data[si + 2];
+        const fillVal = fillWhite ? 255 : 0;
+        if (targetR === fillVal && targetG === fillVal && targetB === fillVal) return; // already filled
+        const tolerance = 40;
+        const matches = (idx: number) =>
+            Math.abs(data[idx] - targetR) <= tolerance &&
+            Math.abs(data[idx + 1] - targetG) <= tolerance &&
+            Math.abs(data[idx + 2] - targetB) <= tolerance;
+        const stack: number[] = [Math.floor(startY) * w + Math.floor(startX)];
+        const visited = new Uint8Array(w * h);
+        while (stack.length > 0) {
+            const pos = stack.pop()!;
+            if (visited[pos]) continue;
+            const x = pos % w, y = Math.floor(pos / w);
+            if (x < 0 || x >= w || y < 0 || y >= h) continue;
+            const idx = pos * 4;
+            if (!matches(idx)) continue;
+            visited[pos] = 1;
+            data[idx] = fillVal; data[idx + 1] = fillVal; data[idx + 2] = fillVal; data[idx + 3] = 255;
+            if (x + 1 < w) stack.push(pos + 1);
+            if (x - 1 >= 0) stack.push(pos - 1);
+            if (y + 1 < h) stack.push(pos + w);
+            if (y - 1 >= 0) stack.push(pos - w);
+        }
+        ctx.putImageData(imageData, 0, 0);
+    };
+
     const handleCanvasContainerWheel = (e: React.WheelEvent) => {
         if (!inpaintBase) return;
         const delta = e.deltaY > 0 ? -0.1 : 0.1;
@@ -1936,14 +1974,20 @@ export const App: React.FC = () => {
             startPanMouse.current = { x: e.clientX, y: e.clientY };
             startPanOffset.current = { x: canvasTransform.x, y: canvasTransform.y };
         } else {
-            setIsDrawing(true);
             if (canvasRef.current) {
                 const rect = canvasRef.current.getBoundingClientRect();
                 const scaleX = canvasRef.current.width / rect.width;
                 const scaleY = canvasRef.current.height / rect.height;
                 const x = (e.clientX - rect.left) * scaleX;
                 const y = (e.clientY - rect.top) * scaleY;
-                
+
+                if (inpaintTool === 'fill') {
+                    floodFill(canvasRef.current, x, y, true);
+                    saveInpaintHistory();
+                    return;
+                }
+
+                setIsDrawing(true);
                 lastDrawPos.current = { x, y };
 
                 const ctx = canvasRef.current.getContext('2d');
@@ -1995,7 +2039,7 @@ export const App: React.FC = () => {
             cursorRef.current.style.height = `${visualDiameter}px`;
         }
 
-        if (isDrawing && !isSpacePressed.current) {
+        if (isDrawing && !isSpacePressed.current && inpaintTool !== 'fill') {
             const ctx = canvasRef.current.getContext('2d');
             if (ctx && lastDrawPos.current) {
                 ctx.globalAlpha = inpaintTool === 'eraser' ? 1 : brushOpacity / 100;
@@ -2396,7 +2440,7 @@ export const App: React.FC = () => {
                                             {editResultItems.length > 0 && (
                                                 <div className="flex-shrink-0 px-6 pb-20 pt-2 border-t border-white/5">
                                                     <div className="flex items-center gap-1 mb-2">
-                                                        <span className="text-[9px] font-bold uppercase text-slate-500 tracking-wider">생성 결과</span>
+                                                        <span className="text-[9px] font-bold uppercase text-slate-500 tracking-wider">Results</span>
                                                         <span className="text-[9px] text-slate-600">({editResultItems.length})</span>
                                                     </div>
                                                     <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
@@ -2459,9 +2503,10 @@ export const App: React.FC = () => {
                                                 <input type="range" min="0" max="100" value={brushHardness} onChange={e => setBrushHardness(parseInt(e.target.value))} className="w-full accent-pink-500" />
                                             </div>
                                         </div>
-                                        <div className="grid grid-cols-2 gap-2 mb-4">
+                                        <div className="grid grid-cols-3 gap-2 mb-4">
                                             <button onClick={() => setInpaintTool('brush')} className={`py-3 rounded-lg text-xs font-bold uppercase transition-all flex flex-col items-center gap-1 ${inpaintTool === 'brush' ? 'bg-pink-600 text-white shadow-lg shadow-pink-500/30' : 'bg-white/5 text-slate-500 hover:bg-white/10'}`}><i className="fas fa-paint-brush"></i> {t.brush}</button>
                                             <button onClick={() => setInpaintTool('eraser')} className={`py-3 rounded-lg text-xs font-bold uppercase transition-all flex flex-col items-center gap-1 ${inpaintTool === 'eraser' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30' : 'bg-white/5 text-slate-500 hover:bg-white/10'}`}><i className="fas fa-eraser"></i> {t.eraser}</button>
+                                            <button onClick={() => setInpaintTool('fill')} className={`py-3 rounded-lg text-xs font-bold uppercase transition-all flex flex-col items-center gap-1 ${inpaintTool === 'fill' ? 'bg-teal-600 text-white shadow-lg shadow-teal-500/30' : 'bg-white/5 text-slate-500 hover:bg-white/10'}`}><i className="fas fa-fill-drip"></i> Fill</button>
                                         </div>
                                         <div className="grid grid-cols-2 gap-2 mb-3">
                                             <button onClick={performInpaintUndo} className="py-2 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white rounded-lg text-xs font-bold uppercase transition-all flex items-center justify-center gap-1.5"><i className="fas fa-undo text-[10px]"></i> Undo</button>
@@ -2508,7 +2553,7 @@ export const App: React.FC = () => {
                                             {inpaintResultItems.length > 0 && (
                                                 <div className="flex-shrink-0 px-6 pb-20 pt-2 border-t border-white/5">
                                                     <div className="flex items-center gap-1 mb-2">
-                                                        <span className="text-[9px] font-bold uppercase text-slate-500 tracking-wider">생성 결과</span>
+                                                        <span className="text-[9px] font-bold uppercase text-slate-500 tracking-wider">Results</span>
                                                         <span className="text-[9px] text-slate-600">({inpaintResultItems.length})</span>
                                                     </div>
                                                     <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
@@ -2571,7 +2616,7 @@ export const App: React.FC = () => {
                                                 }}
                                             />
                                             <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-2.5">
-                                                <div className="flex flex-wrap gap-1">
+                                                <div className="flex flex-wrap gap-1 pl-6">
                                                     {item.metadata?.aspectRatio && (
                                                         <span className="text-[8px] bg-black/50 text-indigo-300 border border-indigo-500/30 rounded px-1.5 py-0.5 font-mono backdrop-blur-sm">{item.metadata.aspectRatio}</span>
                                                     )}
