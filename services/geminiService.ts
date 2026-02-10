@@ -571,20 +571,31 @@ export const generateEditedImage = async (
   const lightingDesc = params.lighting < 30 ? "Low-key, very dark and moody" : params.lighting > 70 ? "High-key, bright and airy commercial" : "Balanced neutral studio";
   const shadowDesc = params.shadow < 30 ? "Extremely soft and diffused, almost shadowless" : params.shadow > 70 ? "Hard, dramatic, high-contrast shadows" : "Natural soft shadows";
 
-  // Build rotation/tilt instructions for Gemini (3D perspective — can't be done in 2D canvas)
+  // Build rotation/tilt instructions for Gemini
+  // Key: say "CAMERA ANGLE" not "turn the subject" — avoids Gemini only rotating the face
   let rotationInstruction = '';
   if (params.rotation !== 0) {
     const deg = Math.abs(params.rotation);
     const dir = params.rotation > 0 ? 'right' : 'left';
-    if (deg <= 15) rotationInstruction = `- ROTATION: Subtly turn the subject slightly to their ${dir}. Show a very slight ${dir}-side perspective (about ${deg}°).`;
-    else if (deg <= 45) rotationInstruction = `- ROTATION: Turn the subject to face ${deg === 90 ? 'directly to the side' : `their ${dir}`}. Show a clear ${dir}-side 3/4 view (about ${deg}°). The face and body should show perspective foreshortening.`;
-    else rotationInstruction = `- ROTATION: Turn the subject strongly to their ${dir} (about ${deg}°). Show a ${deg >= 90 ? 'profile or near-profile' : `strong ${dir}`} view with realistic 3D perspective.`;
+    const opposite = params.rotation > 0 ? 'left' : 'right';
+    const viewDesc = deg < 20 ? `a very slight ${dir}-angle view` :
+                     deg < 45 ? `a 3/4 view showing the ${dir} side` :
+                     deg < 80 ? `a strong ${dir}-side angle` :
+                     `a ${dir} profile view`;
+    rotationInstruction = `- CAMERA ANGLE (HORIZONTAL): Re-shoot this fashion photo from ${deg}° to the ${dir}.
+  * The camera moves ${deg}° to the ${dir} of the subject.
+  * Result: show MORE of the subject's ${dir} shoulder/side, LESS of their ${opposite} side.
+  * This affects the ENTIRE BODY equally — torso, arms, clothing, legs, feet all show ${viewDesc}.
+  * NOT just the face — this is a FULL BODY perspective/angle change.
+  * Keep the same outfit, background, and lighting. Only the viewing angle changes.`;
   }
   let tiltInstruction = '';
   if (params.tilt !== 0) {
     const deg = Math.abs(params.tilt);
     const dir = params.tilt > 0 ? 'upward' : 'downward';
-    tiltInstruction = `- TILT: Tilt the camera angle ${dir} by about ${deg}°. ${params.tilt > 0 ? 'View the subject from slightly below (low-angle shot).' : 'View the subject from slightly above (high-angle shot).'}`;
+    const shot = params.tilt > 0 ? 'low-angle shot (camera below subject, looking up)' : 'high-angle shot (camera above subject, looking down)';
+    tiltInstruction = `- CAMERA ANGLE (VERTICAL): Re-shoot from ${deg}° ${dir} — ${shot}.
+  * The ENTIRE BODY reflects this camera tilt, not just the head.`;
   }
 
   const lightingChanged = params.lighting !== 50;
@@ -592,26 +603,25 @@ export const generateEditedImage = async (
   const hasChanges = lightingChanged || shadowChanged || params.relighting || params.rotation !== 0 || params.tilt !== 0 || userPrompt.trim();
 
   const prompt = `
-    [ROLE: PROFESSIONAL FASHION PHOTO EDITOR]
+    [ROLE: PROFESSIONAL FASHION PHOTOGRAPHER & PHOTO EDITOR]
 
-    TASK: Edit the provided fashion photo by applying ALL of the following adjustments.
+    TASK: Recreate this fashion photo with the following changes applied.
 
     INPUT MAPPING:
     ${inputMap}
 
-    ADJUSTMENTS TO APPLY:
-    ${rotationInstruction || '- ROTATION: No rotation change.'}
-    ${tiltInstruction || '- TILT: No camera tilt change.'}
-    ${lightingChanged ? `- LIGHTING: Change to ${lightingDesc} (${params.lighting}/100). Must be clearly visible.` : '- LIGHTING: Keep current lighting.'}
-    ${shadowChanged ? `- SHADOWS: Change to ${shadowDesc} (${params.shadow}/100). Must be clearly visible.` : '- SHADOWS: Keep current shadows.'}
-    ${params.relighting ? '- RELIGHTING: Apply professional 3-point studio relighting with subject separation.' : ''}
-    ${userPrompt.trim() ? `- USER REQUEST (HIGHEST PRIORITY): "${userPrompt}" — Apply EXACTLY and CLEARLY as described.` : ''}
+    CHANGES TO APPLY:
+    ${rotationInstruction || '- CAMERA ANGLE (HORIZONTAL): Keep current front-facing angle.'}
+    ${tiltInstruction || '- CAMERA ANGLE (VERTICAL): Keep current camera height.'}
+    ${lightingChanged ? `- LIGHTING: ${lightingDesc} (${params.lighting}/100). Must be clearly visible.` : '- LIGHTING: Keep current lighting.'}
+    ${shadowChanged ? `- SHADOWS: ${shadowDesc} (${params.shadow}/100). Must be clearly visible.` : '- SHADOWS: Keep current shadows.'}
+    ${params.relighting ? '- RELIGHTING: Apply professional 3-point studio relighting.' : ''}
+    ${userPrompt.trim() ? `- USER REQUEST (TOP PRIORITY): "${userPrompt}" — Apply this EXACTLY and CLEARLY.` : ''}
 
-    REQUIREMENTS:
-    - ${hasChanges ? 'ALL adjustments above MUST be visibly reflected. Be decisive and clear — do not be subtle.' : 'Output a clean, high-quality version of the input.'}
-    - Preserve subject identity and clothing design.
-    - Photorealistic output — no artifacts, seamless integration.
-    - Output the COMPLETE image.
+    OUTPUT REQUIREMENTS:
+    - ${hasChanges ? 'ALL changes MUST be clearly visible. Be decisive — do not be subtle.' : 'Output a clean, high-quality version of the input.'}
+    - Preserve the exact same clothing, outfit details, and model identity.
+    - Photorealistic. No artifacts. Output the COMPLETE image.
   `;
 
   parts.push({ text: prompt });
@@ -647,49 +657,126 @@ export const generateEditedImage = async (
   }
 };
 
-// Describe the painted area's position in natural language for the AI prompt.
-// Derived from the mask's bounding box relative to image dimensions.
-const describeSelectionArea = (maskBase64: string): Promise<string> => {
+// Crop the masked region from the original image (with padding).
+// Returns the cropped image and its position in the original.
+const cropMaskedRegion = (
+  imageBase64: string,
+  maskBase64: string,
+  padding = 60
+): Promise<{ cropBase64: string; x: number; y: number; cropW: number; cropH: number; origW: number; origH: number } | null> => {
   return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const origW = img.naturalWidth || img.width;
-      const origH = img.naturalHeight || img.height;
-      const canvas = document.createElement('canvas');
-      canvas.width = origW; canvas.height = origH;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) { resolve('the selected area'); return; }
-      ctx.drawImage(img, 0, 0);
-      const data = ctx.getImageData(0, 0, origW, origH).data;
-      let minX = origW, minY = origH, maxX = 0, maxY = 0, hasWhite = false;
-      for (let y = 0; y < origH; y++) {
-        for (let x = 0; x < origW; x++) {
-          if (data[(y * origW + x) * 4] > 128) {
+    let loaded = 0;
+    const origImg = new Image();
+    const maskImg = new Image();
+    const onLoad = () => {
+      loaded++;
+      if (loaded < 2) return;
+      const W = origImg.naturalWidth || origImg.width;
+      const H = origImg.naturalHeight || origImg.height;
+      // Find bounding box of white pixels in mask
+      const mc = document.createElement('canvas');
+      mc.width = W; mc.height = H;
+      const mctx = mc.getContext('2d');
+      if (!mctx) { resolve(null); return; }
+      mctx.drawImage(maskImg, 0, 0, W, H);
+      const mdata = mctx.getImageData(0, 0, W, H).data;
+      let minX = W, minY = H, maxX = 0, maxY = 0, hasWhite = false;
+      for (let y = 0; y < H; y++) {
+        for (let x = 0; x < W; x++) {
+          if (mdata[(y * W + x) * 4] > 128) {
             if (x < minX) minX = x; if (x > maxX) maxX = x;
             if (y < minY) minY = y; if (y > maxY) maxY = y;
             hasWhite = true;
           }
         }
       }
-      if (!hasWhite) { resolve('the main subject'); return; }
-      const cx = (minX + maxX) / 2 / origW;
-      const cy = (minY + maxY) / 2 / origH;
-      const areaFrac = ((maxX - minX) * (maxY - minY)) / (origW * origH);
-      const hPart = cx < 0.35 ? 'left' : cx > 0.65 ? 'right' : 'center';
-      const vPart = cy < 0.35 ? 'upper' : cy > 0.65 ? 'lower' : 'middle';
-      if (areaFrac > 0.45) { resolve('the entire scene'); return; }
-      if (areaFrac < 0.04) { resolve(`the small object in the ${vPart}-${hPart} area`); return; }
-      resolve(`the ${vPart}-${hPart} area`);
+      if (!hasWhite) { resolve(null); return; }
+      // Add padding and clamp to image bounds
+      const x = Math.max(0, minX - padding);
+      const y = Math.max(0, minY - padding);
+      const x2 = Math.min(W, maxX + padding);
+      const y2 = Math.min(H, maxY + padding);
+      const cropW = x2 - x;
+      const cropH = y2 - y;
+      // Crop from original
+      const cc = document.createElement('canvas');
+      cc.width = cropW; cc.height = cropH;
+      const cctx = cc.getContext('2d');
+      if (!cctx) { resolve(null); return; }
+      cctx.drawImage(origImg, x, y, cropW, cropH, 0, 0, cropW, cropH);
+      resolve({ cropBase64: cc.toDataURL('image/png'), x, y, cropW, cropH, origW: W, origH: H });
     };
-    img.onerror = () => resolve('the selected area');
-    img.src = maskBase64;
+    origImg.onload = onLoad;
+    maskImg.onload = onLoad;
+    origImg.onerror = () => resolve(null);
+    maskImg.onerror = () => resolve(null);
+    origImg.src = imageBase64;
+    maskImg.src = maskBase64;
+  });
+};
+
+// Paste the edited crop back into the original image, using the mask for blending.
+const pasteCropIntoOriginal = (
+  originalBase64: string,
+  editedCropBase64: string,
+  maskBase64: string,
+  x: number, y: number, cropW: number, cropH: number
+): Promise<string> => {
+  return new Promise((resolve) => {
+    let loaded = 0;
+    const origImg = new Image();
+    const cropImg = new Image();
+    const maskImg = new Image();
+    const onLoad = () => {
+      loaded++;
+      if (loaded < 3) return;
+      const W = origImg.naturalWidth || origImg.width;
+      const H = origImg.naturalHeight || origImg.height;
+      const canvas = document.createElement('canvas');
+      canvas.width = W; canvas.height = H;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { resolve(editedCropBase64); return; }
+      // Draw original
+      ctx.drawImage(origImg, 0, 0, W, H);
+      const origData = ctx.getImageData(0, 0, W, H);
+      // Draw scaled edited crop into the crop region
+      ctx.clearRect(0, 0, W, H);
+      ctx.drawImage(origImg, 0, 0, W, H);
+      ctx.drawImage(cropImg, x, y, cropW, cropH);
+      const composited = ctx.getImageData(0, 0, W, H);
+      // Apply mask blending: white mask = use composited, black mask = use original
+      ctx.clearRect(0, 0, W, H);
+      ctx.drawImage(maskImg, 0, 0, W, H);
+      const maskData = ctx.getImageData(0, 0, W, H);
+      const out = ctx.createImageData(W, H);
+      for (let i = 0; i < out.data.length; i += 4) {
+        const m = maskData.data[i] / 255;
+        out.data[i]     = Math.round(origData.data[i]     * (1 - m) + composited.data[i]     * m);
+        out.data[i + 1] = Math.round(origData.data[i + 1] * (1 - m) + composited.data[i + 1] * m);
+        out.data[i + 2] = Math.round(origData.data[i + 2] * (1 - m) + composited.data[i + 2] * m);
+        out.data[i + 3] = 255;
+      }
+      ctx.putImageData(out, 0, 0);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    origImg.onload = onLoad; cropImg.onload = onLoad; maskImg.onload = onLoad;
+    origImg.onerror = () => resolve(originalBase64);
+    cropImg.onerror = () => resolve(originalBase64);
+    maskImg.onerror = () => resolve(originalBase64);
+    origImg.src = originalBase64;
+    cropImg.src = editedCropBase64;
+    maskImg.src = maskBase64;
   });
 };
 
 // --- Main inpainting function ---
-// Strategy: overlay the mask as a red/pink tint on the original image so Gemini
-// can VISUALLY SEE the selection area. Then ask Gemini to replace that highlighted
-// region. client-side compositeMaskResult does pixel-perfect masking afterward.
+// Strategy: CROP the masked region → send ONLY the crop to Gemini → paste result
+// back at the exact original position using mask blending.
+//
+// Why cropping works:
+// - Gemini sees only the selected object (e.g., shoes) at close range
+// - It can't place the result in the wrong location (the crop IS the location)
+// - Avoids "slippers appearing on the wall" type errors from full-image approach
 export const generateInpainting = async (
   imageBase64: string,
   maskBase64: string,
@@ -697,42 +784,43 @@ export const generateInpainting = async (
   refImages: string[] = [],
   modelId: string,
   seed?: number
-): Promise<{ imageUrl: string, seed: number }> => {
+): Promise<{ imageUrl: string, seed: number; cropInfo?: { x: number; y: number; cropW: number; cropH: number } }> => {
   const ai = getGenAI();
   const finalSeed = resolveSeed(seed);
 
-  // Create masked preview — red/pink overlay shows Gemini exactly WHERE to edit
-  const maskedPreview = await createMaskedPreview(imageBase64, maskBase64);
-  const optimizedMasked = await optimizeImage(maskedPreview);
-  const detectedAR = await detectAspectRatio(imageBase64);
+  const instruction = userPrompt?.trim() || 'Enhance and improve naturally.';
+
+  // 1. Crop the masked region
+  const cropData = await cropMaskedRegion(imageBase64, maskBase64, 60);
+  if (!cropData) throw new Error('마스크 영역을 인식할 수 없습니다. 편집할 영역을 브러시로 그린 후 다시 시도해주세요.');
+
+  const { cropBase64, x, y, cropW, cropH } = cropData;
+  const cropAR = await detectAspectRatio(cropBase64);
+  const optimizedCrop = await optimizeImage(cropBase64, 768);
 
   const parts: any[] = [
-    { inlineData: { data: optimizedMasked.split(',')[1], mimeType: getMimeType(optimizedMasked) } }
+    { inlineData: { data: optimizedCrop.split(',')[1], mimeType: getMimeType(optimizedCrop) } }
   ];
 
   for (const ref of refImages) {
     if (ref && typeof ref === 'string') {
-      const opt = await optimizeImage(ref);
+      const opt = await optimizeImage(ref, 512);
       parts.push({ inlineData: { data: opt.split(',')[1], mimeType: getMimeType(opt) } });
     }
   }
 
-  const instruction = userPrompt?.trim() || 'Enhance and improve this area naturally.';
+  // 2. Ask Gemini to edit only the crop
+  const prompt = `You are editing a CROPPED SECTION from a fashion photo.
 
-  // The image has a RED/PINK tinted region marking the selection.
-  // Gemini's job: replace that highlighted area with the instruction.
-  // compositeMaskResult will handle pixel-perfect boundary blending afterward.
-  const prompt = `You are a professional photo editor.
+This image shows a specific area that needs to be modified.
 
-In this image, there is a RED/PINK highlighted region (reddish-pink tint overlay).
+YOUR TASK: "${instruction}"
 
-YOUR TASK: Replace the RED/PINK highlighted area with: "${instruction}"
-
-RULES:
-1. Change ONLY the red/pink highlighted region. Make the change CLEARLY VISIBLE and decisive.
-2. Keep everything OUTSIDE the highlighted area exactly unchanged — same pixels, same lighting.
-3. The result must look photorealistic and seamlessly integrated with the surroundings.
-4. Output the COMPLETE image at the same dimensions and composition.${refImages.length > 0 ? '\n5. Reference image provided — use it for style/visual guidance.' : ''}`;
+CRITICAL RULES:
+1. This is a CROP — output must match the SAME framing, scale, and position as the input.
+2. Apply "${instruction}" clearly and decisively to the content shown.
+3. Keep background, lighting, and surroundings consistent.
+4. Do NOT reframe, zoom, or change the composition — output must fit back into the original photo.${refImages.length > 0 ? '\n5. Use the reference image for style guidance.' : ''}`;
 
   parts.push({ text: prompt });
 
@@ -740,26 +828,28 @@ RULES:
     const response = await retryOperation(() => ai.models.generateContent({
       model: modelId || 'gemini-3-pro-image-preview',
       contents: { parts },
-      config: { seed: finalSeed, imageConfig: { aspectRatio: detectedAR } }
+      config: { seed: finalSeed, imageConfig: { aspectRatio: cropAR } }
     })) as GenerateContentResponse;
 
-    let resultBase64 = '';
+    let editedCropBase64 = '';
     const candidate = response.candidates?.[0];
     if (candidate?.content?.parts) {
       for (const part of candidate.content.parts) {
         if (part.inlineData) {
-          resultBase64 = `data:image/png;base64,${part.inlineData.data}`;
+          editedCropBase64 = `data:image/png;base64,${part.inlineData.data}`;
           break;
         }
       }
     }
 
-    if (!resultBase64) throw new Error("Inpainting failed — AI returned no image. Check your API key and try again.");
-    // Full-size result is returned; App.tsx compositeMaskResult blends it with original using mask
-    return { imageUrl: resultBase64, seed: finalSeed };
+    if (!editedCropBase64) throw new Error('인페인팅 실패 — AI가 이미지를 반환하지 않았습니다. API 키를 확인하고 다시 시도해주세요.');
+
+    // 3. Paste the edited crop back into the original at the exact crop position
+    const finalImage = await pasteCropIntoOriginal(imageBase64, editedCropBase64, maskBase64, x, y, cropW, cropH);
+    return { imageUrl: finalImage, seed: finalSeed, cropInfo: { x, y, cropW, cropH } };
 
   } catch (error: any) {
-    console.error("Gemini Inpainting Error:", error);
+    console.error('Gemini Inpainting Error:', error);
     throw error;
   }
 };
