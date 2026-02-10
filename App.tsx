@@ -1599,7 +1599,7 @@ export const App: React.FC = () => {
         if (!confirm(`${selectedImages.size}개의 이미지를 삭제하시겠습니까? Google Drive에서도 삭제됩니다.`)) {
             return;
         }
-        const idsToDelete = Array.from(selectedImages);
+        const idsToDelete: string[] = Array.from(selectedImages);
         setHistory(prev => prev.filter(h => !selectedImages.has(h.id)));
 
         for (const id of idsToDelete) {

@@ -1,5 +1,8 @@
 import { getGoogleAccessToken } from './authService';
 
+// Declare gapi as a global variable (loaded via script tag in index.html)
+declare var gapi: any;
+
 /**
  * Google Drive API Service using gapi
  * Handles image upload, download, and management
