@@ -1484,6 +1484,8 @@ export const App: React.FC = () => {
 
     const [editImage, setEditImage] = useState<string | null>(null);
     const [editParams, setEditParams] = useState({ rotation: 0, tilt: 0, zoom: 0, lighting: 50, shadow: 50, relighting: false });
+    const [editImageScale, setEditImageScale] = useState(1);
+    const defaultEditParams = { rotation: 0, tilt: 0, zoom: 0, lighting: 50, shadow: 50, relighting: false };
     const [editPrompt, setEditPrompt] = useState('');
     const [editResult, setEditResult] = useState<string | null>(null);
     const [isEditing, setIsEditing] = useState(false);
@@ -2283,35 +2285,72 @@ export const App: React.FC = () => {
                                             <input type="number" value={studioState.seed === -1 ? '' : studioState.seed} onChange={e => setStudioState(p => ({ ...p, seed: parseInt(e.target.value) || 0 }))} disabled={studioState.useRandomSeed} placeholder={studioState.useRandomSeed ? "Random" : "Enter Seed"} className={`w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[10px] text-slate-300 font-mono transition-opacity ${studioState.useRandomSeed ? 'opacity-50' : 'opacity-100'}`} />
                                         </div>
                                         <CubeVisualizer rotation={editParams.rotation} tilt={editParams.tilt} zoom={editParams.zoom} onChange={(r, ti) => setEditParams(p => ({ ...p, rotation: r, tilt: ti }))} />
+                                        <div className="flex items-center justify-between mb-3">
+                                            <span className="text-[9px] font-bold uppercase text-slate-500 tracking-wider">Parameters</span>
+                                            <button onClick={() => setEditParams({ ...defaultEditParams })} className="text-[8px] font-bold uppercase text-slate-600 hover:text-slate-300 border border-white/10 hover:border-white/20 rounded px-2 py-0.5 transition-colors">Reset All</button>
+                                        </div>
                                         <div className="space-y-4 mb-6">
                                             <div>
-                                                <div className="flex items-center justify-between mb-1.5"><label className="text-[9px] font-bold uppercase text-slate-500">{t.rotation ?? 'Rotation'}</label><span className="text-[9px] font-mono text-indigo-400">{editParams.rotation}°</span></div>
+                                                <div className="flex items-center justify-between mb-1.5">
+                                                    <label className="text-[9px] font-bold uppercase text-slate-500">{t.rotation ?? 'Rotation'}</label>
+                                                    <div className="flex items-center gap-1.5">
+                                                        <span className="text-[9px] font-mono text-indigo-400">{editParams.rotation}°</span>
+                                                        {editParams.rotation !== 0 && <button onClick={() => setEditParams(p => ({...p, rotation: 0}))} className="text-[8px] text-slate-600 hover:text-slate-400 transition-colors"><i className="fas fa-undo-alt"></i></button>}
+                                                    </div>
+                                                </div>
                                                 <input type="range" min="-180" max="180" value={editParams.rotation} onChange={e => setEditParams(p => ({ ...p, rotation: parseInt(e.target.value) }))} className="w-full accent-indigo-500" />
                                             </div>
                                             <div>
-                                                <div className="flex items-center justify-between mb-1.5"><label className="text-[9px] font-bold uppercase text-slate-500">{t.tilt ?? 'Tilt'}</label><span className="text-[9px] font-mono text-indigo-400">{editParams.tilt}°</span></div>
+                                                <div className="flex items-center justify-between mb-1.5">
+                                                    <label className="text-[9px] font-bold uppercase text-slate-500">{t.tilt ?? 'Tilt'}</label>
+                                                    <div className="flex items-center gap-1.5">
+                                                        <span className="text-[9px] font-mono text-indigo-400">{editParams.tilt}°</span>
+                                                        {editParams.tilt !== 0 && <button onClick={() => setEditParams(p => ({...p, tilt: 0}))} className="text-[8px] text-slate-600 hover:text-slate-400 transition-colors"><i className="fas fa-undo-alt"></i></button>}
+                                                    </div>
+                                                </div>
                                                 <input type="range" min="-90" max="90" value={editParams.tilt} onChange={e => setEditParams(p => ({ ...p, tilt: parseInt(e.target.value) }))} className="w-full accent-indigo-500" />
                                             </div>
                                             <div>
-                                                <div className="flex items-center justify-between mb-1.5"><label className="text-[9px] font-bold uppercase text-slate-500">{t.zoom}</label><span className="text-[9px] font-mono text-sky-400">{editParams.zoom > 0 ? `+${editParams.zoom}` : editParams.zoom}</span></div>
+                                                <div className="flex items-center justify-between mb-1.5">
+                                                    <label className="text-[9px] font-bold uppercase text-slate-500">{t.zoom}</label>
+                                                    <div className="flex items-center gap-1.5">
+                                                        <span className="text-[9px] font-mono text-sky-400">{editParams.zoom > 0 ? `+${editParams.zoom}` : editParams.zoom}</span>
+                                                        {editParams.zoom !== 0 && <button onClick={() => setEditParams(p => ({...p, zoom: 0}))} className="text-[8px] text-slate-600 hover:text-slate-400 transition-colors"><i className="fas fa-undo-alt"></i></button>}
+                                                    </div>
+                                                </div>
                                                 <input type="range" min="-50" max="100" value={editParams.zoom} onChange={e => setEditParams(p => ({ ...p, zoom: parseInt(e.target.value) }))} className="w-full accent-sky-500" />
                                             </div>
                                             <div>
-                                                <div className="flex items-center justify-between mb-1.5"><label className="text-[9px] font-bold uppercase text-slate-500">{t.lighting}</label><span className="text-[9px] font-mono text-yellow-400">{editParams.lighting}</span></div>
+                                                <div className="flex items-center justify-between mb-1.5">
+                                                    <label className="text-[9px] font-bold uppercase text-slate-500">{t.lighting}</label>
+                                                    <div className="flex items-center gap-1.5">
+                                                        <span className="text-[9px] font-mono text-yellow-400">{editParams.lighting}</span>
+                                                        {editParams.lighting !== 50 && <button onClick={() => setEditParams(p => ({...p, lighting: 50}))} className="text-[8px] text-slate-600 hover:text-slate-400 transition-colors"><i className="fas fa-undo-alt"></i></button>}
+                                                    </div>
+                                                </div>
                                                 <input type="range" min="0" max="100" value={editParams.lighting} onChange={e => setEditParams(p => ({ ...p, lighting: parseInt(e.target.value) }))} className="w-full accent-yellow-500" />
                                             </div>
                                             <div>
-                                                <div className="flex items-center justify-between mb-1.5"><label className="text-[9px] font-bold uppercase text-slate-500">{t.shadows}</label><span className="text-[9px] font-mono text-slate-400">{editParams.shadow}</span></div>
+                                                <div className="flex items-center justify-between mb-1.5">
+                                                    <label className="text-[9px] font-bold uppercase text-slate-500">{t.shadows}</label>
+                                                    <div className="flex items-center gap-1.5">
+                                                        <span className="text-[9px] font-mono text-slate-400">{editParams.shadow}</span>
+                                                        {editParams.shadow !== 50 && <button onClick={() => setEditParams(p => ({...p, shadow: 50}))} className="text-[8px] text-slate-600 hover:text-slate-400 transition-colors"><i className="fas fa-undo-alt"></i></button>}
+                                                    </div>
+                                                </div>
                                                 <input type="range" min="0" max="100" value={editParams.shadow} onChange={e => setEditParams(p => ({ ...p, shadow: parseInt(e.target.value) }))} className="w-full accent-slate-500" />
                                             </div>
                                             <div className="flex items-center justify-between pt-1">
                                                 <label className="text-[9px] font-bold uppercase text-slate-500">Relighting</label>
-                                                <button
-                                                    onClick={() => setEditParams(p => ({ ...p, relighting: !p.relighting }))}
-                                                    className={`relative w-9 h-5 rounded-full transition-colors ${editParams.relighting ? 'bg-yellow-500' : 'bg-white/10'}`}
-                                                >
-                                                    <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${editParams.relighting ? 'translate-x-4' : 'translate-x-0'}`} />
-                                                </button>
+                                                <div className="flex items-center gap-2">
+                                                    {editParams.relighting && <button onClick={() => setEditParams(p => ({...p, relighting: false}))} className="text-[8px] text-slate-600 hover:text-slate-400 transition-colors"><i className="fas fa-undo-alt"></i></button>}
+                                                    <button
+                                                        onClick={() => setEditParams(p => ({ ...p, relighting: !p.relighting }))}
+                                                        className={`relative w-9 h-5 rounded-full transition-colors ${editParams.relighting ? 'bg-yellow-500' : 'bg-white/10'}`}
+                                                    >
+                                                        <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${editParams.relighting ? 'translate-x-4' : 'translate-x-0'}`} />
+                                                    </button>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -2329,18 +2368,30 @@ export const App: React.FC = () => {
                                                     setEditImage(null);
                                                     setEditResult(null);
                                                     setEditRefImages([]);
-                                                    setEditResultItems([]);
+                                                    setEditImageScale(1);
                                                 }}
                                                 className="absolute top-8 right-8 z-10 w-10 h-10 bg-red-500/90 hover:bg-red-600 text-white rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110"
                                                 title="Clear image"
                                             >
                                                 <i className="fas fa-times"></i>
                                             </button>
-                                            <div className="flex-1 flex items-center justify-center p-6 pb-4 min-h-0">
-                                                <div className="relative max-h-full max-w-full flex items-center justify-center">
-                                                    <img src={editImage} className="max-h-full max-w-full rounded-lg shadow-2xl object-contain" style={{ maxHeight: editResultItems.length > 0 ? 'calc(100vh - 280px)' : 'calc(100vh - 180px)' }} />
+                                            <div
+                                                className="flex-1 flex items-center justify-center p-6 pb-4 min-h-0 overflow-hidden"
+                                                onWheel={e => {
+                                                    e.preventDefault();
+                                                    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+                                                    setEditImageScale(prev => Math.min(Math.max(0.2, prev + delta), 5));
+                                                }}
+                                            >
+                                                <div className="relative flex items-center justify-center" style={{ transform: `scale(${editImageScale})`, transformOrigin: 'center', transition: 'transform 0.1s ease-out' }}>
+                                                    <img src={editImage} className="rounded-lg shadow-2xl object-contain" style={{ maxHeight: editResultItems.length > 0 ? 'calc(100vh - 280px)' : 'calc(100vh - 180px)', maxWidth: '100%' }} />
                                                     {isEditing && <div className="absolute inset-0 bg-black/50 flex items-center justify-center rounded-lg"><i className="fas fa-circle-notch fa-spin text-white text-3xl"></i></div>}
                                                 </div>
+                                                {editImageScale !== 1 && (
+                                                    <div className="absolute bottom-6 left-1/2 -translate-x-1/2 text-[9px] font-mono text-slate-500 bg-black/40 px-2 py-1 rounded backdrop-blur-sm pointer-events-none">
+                                                        {Math.round(editImageScale * 100)}%
+                                                    </div>
+                                                )}
                                             </div>
                                             {editResultItems.length > 0 && (
                                                 <div className="flex-shrink-0 px-6 pb-20 pt-2 border-t border-white/5">
@@ -2560,15 +2611,15 @@ export const App: React.FC = () => {
                                         </div>
                                     </div>
                                 ))}
-                                {history.length === 0 && (
-                                    <div className="w-full h-96 flex flex-col items-center justify-center text-slate-500 opacity-50">
-                                        <i className="fas fa-images text-4xl mb-4"></i>
-                                        <p className="text-sm font-bold uppercase tracking-widest">생성된 이미지가 없습니다</p>
-                                        <p className="text-xs mt-2">Studio, Edit, Inpaint에서 이미지를 생성해보세요</p>
-                                        <p className="text-xs text-indigo-400 mt-1">모든 이미지는 자동으로 Google Drive에 저장됩니다</p>
-                                    </div>
-                                )}
                             </div>
+                            {history.length === 0 && (
+                                <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 opacity-50 pointer-events-none">
+                                    <i className="fas fa-images text-4xl mb-4"></i>
+                                    <p className="text-sm font-bold uppercase tracking-widest">생성된 이미지가 없습니다</p>
+                                    <p className="text-xs mt-2">Studio, Edit, Inpaint에서 이미지를 생성해보세요</p>
+                                    <p className="text-xs text-indigo-400 mt-1">모든 이미지는 자동으로 Google Drive에 저장됩니다</p>
+                                </div>
+                            )}
 
                             {/* Floating Action Bar */}
                             {selectedImages.size > 0 && (

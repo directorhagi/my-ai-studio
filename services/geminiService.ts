@@ -56,6 +56,33 @@ const optimizeImage = (base64Str: string, maxWidth = 1024): Promise<string> => {
   });
 };
 
+// Binarize mask: threshold each pixel to pure black or white
+// Ensures semi-transparent or grey brush strokes become solid for the API
+const binarizeMask = (maskBase64: string): Promise<string> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth || img.width;
+      canvas.height = img.naturalHeight || img.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { resolve(maskBase64); return; }
+      ctx.drawImage(img, 0, 0);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imageData.data;
+      for (let i = 0; i < data.length; i += 4) {
+        const brightness = (data[i] + data[i + 1] + data[i + 2]) / 3;
+        const val = brightness > 64 ? 255 : 0; // threshold at 25%
+        data[i] = val; data[i + 1] = val; data[i + 2] = val; data[i + 3] = 255;
+      }
+      ctx.putImageData(imageData, 0, 0);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = () => resolve(maskBase64);
+    img.src = maskBase64;
+  });
+};
+
 // Detect aspect ratio from base64 image dimensions
 const detectAspectRatio = (base64: string): Promise<AspectRatio> => {
   return new Promise((resolve) => {
@@ -438,12 +465,12 @@ export const generateEditedImage = async (
   const angleDesc = `Camera Rotation: ${params.rotation} degrees (Horizontal), Camera Tilt: ${params.tilt} degrees (Vertical). Match the perspective changes realistically.`;
   
   let zoomDesc = "";
-  if (params.zoom === 1) {
-      zoomDesc = "Field of View: Standard (No Zoom).";
-  } else if (params.zoom > 1) {
-      zoomDesc = `ZOOM IN (Telephoto effect): ${params.zoom.toFixed(1)}x magnification. Crop tighter on the subject.`;
+  if (params.zoom === 0) {
+      zoomDesc = "Field of View: Standard (No Zoom change).";
+  } else if (params.zoom > 0) {
+      zoomDesc = `ZOOM IN (Telephoto effect): +${params.zoom} level. Crop tighter on the subject, reducing the field of view.`;
   } else {
-      zoomDesc = `ZOOM OUT (Wide Angle effect): ${params.zoom.toFixed(1)}x scale. Expand the frame to show more surroundings (Outpaint if necessary).`;
+      zoomDesc = `ZOOM OUT (Wide Angle effect): ${params.zoom} level. Expand the field of view, showing more surroundings (Outpaint if necessary).`;
   }
 
   const lightingDesc = params.lighting < 30 ? "Low-key, moody lighting" : params.lighting > 70 ? "High-key, bright commercial lighting" : "Balanced studio lighting";
@@ -520,7 +547,8 @@ export const generateInpainting = async (
   const finalSeed = resolveSeed(seed);
   const detectedAspectRatio = await detectAspectRatio(imageBase64);
   const optimizedBase = await optimizeImage(imageBase64);
-  const optimizedMask = await optimizeImage(maskBase64); // Mask also needs optimization to match dimensions
+  const binarizedMask = await binarizeMask(maskBase64);
+  const optimizedMask = await optimizeImage(binarizedMask);
 
   const parts: any[] = [
     {
