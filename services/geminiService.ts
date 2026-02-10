@@ -106,18 +106,34 @@ const applyGeometricTransforms = (
       ctx.fillRect(0, 0, w, h);
       ctx.save();
       ctx.translate(w / 2, h / 2);
-      // Rotation (horizontal spin)
-      if (rotation !== 0) ctx.rotate((rotation * Math.PI) / 180);
-      // Tilt: simulate as vertical skew
+
+      // Rotation with auto-scale to eliminate black corners.
+      // Formula: scale = max((w*cosA + h*sinA)/w, (h*cosA + w*sinA)/h)
+      // This ensures the rotated image completely covers the canvas.
+      if (rotation !== 0) {
+        const rotRad = Math.abs(rotation * Math.PI / 180);
+        const cosA = Math.abs(Math.cos(rotRad));
+        const sinA = Math.abs(Math.sin(rotRad));
+        const fillScale = Math.max(
+          (w * cosA + h * sinA) / w,
+          (h * cosA + w * sinA) / h
+        );
+        ctx.rotate((rotation * Math.PI) / 180);
+        ctx.scale(fillScale, fillScale);
+      }
+
+      // Tilt: simulate as vertical skew (applied after rotation)
       if (tilt !== 0) {
         const skew = Math.tan((tilt * Math.PI) / 180) * 0.3;
         ctx.transform(1, skew, 0, 1, 0, 0);
       }
-      // Zoom
+
+      // Additional user zoom on top of auto fill-scale
       if (zoom !== 0) {
-        const scale = zoom > 0 ? 1 + zoom / 100 : 1 / (1 + Math.abs(zoom) / 100);
-        ctx.scale(scale, scale);
+        const zoomScale = zoom > 0 ? 1 + zoom / 100 : 1 / (1 + Math.abs(zoom) / 100);
+        ctx.scale(zoomScale, zoomScale);
       }
+
       ctx.drawImage(img, -w / 2, -h / 2, w, h);
       ctx.restore();
       resolve(canvas.toDataURL('image/png'));
@@ -635,23 +651,27 @@ export const generateInpainting = async (
   const finalSeed = resolveSeed(seed);
   const detectedAspectRatio = await detectAspectRatio(imageBase64);
 
-  // Binarize mask → create single preview image with red tint on masked area
-  // Single-image approach is more reliable than 2-image mask interpretation
-  const binarizedMask = await binarizeMask(maskBase64);
-  const maskedPreview = await createMaskedPreview(imageBase64, binarizedMask);
-  const optimizedPreview = await optimizeImage(maskedPreview);
+  // maskBase64 is already binarized by the caller (App.tsx runInpaint)
+  const optimizedBase = await optimizeImage(imageBase64);
+  const optimizedMask = await optimizeImage(maskBase64);
 
   const parts: any[] = [
     {
       inlineData: {
-        data: optimizedPreview.split(',')[1],
-        mimeType: getMimeType(optimizedPreview)
+        data: optimizedBase.split(',')[1],
+        mimeType: getMimeType(optimizedBase)
+      }
+    },
+    {
+      inlineData: {
+        data: optimizedMask.split(',')[1],
+        mimeType: getMimeType(optimizedMask)
       }
     }
   ];
 
-  let inputMap = `- IMAGE 1: The target photo. The RED/PINK highlighted area marks the EXACT region to modify. All non-highlighted areas must remain unchanged.\n`;
-  let currentIndex = 2;
+  let refInputMap = '';
+  let currentIndex = 3;
 
   for (const ref of refImages) {
     if (ref && typeof ref === 'string') {
@@ -662,30 +682,34 @@ export const generateInpainting = async (
           mimeType: getMimeType(optimizedRef)
         }
       });
-      inputMap += `- IMAGE ${currentIndex}: Style/Content Reference — use to guide what to generate inside the highlighted area.\n`;
+      refInputMap += `- IMAGE ${currentIndex}: Style/content reference for the edit.\n`;
       currentIndex++;
     }
   }
 
+  const editInstruction = userPrompt?.trim() || 'Naturally improve and enhance the masked area.';
+
   const prompt = `
-    [ROLE: EXPERT PHOTO RETOUCHER & PRECISION INPAINTER]
+[ROLE: PROFESSIONAL PHOTO EDITOR]
 
-    TASK: Modify ONLY the red/pink highlighted region in the image. Everything outside the highlight MUST remain pixel-perfect identical.
+TASK: Apply a targeted edit to the photo using the provided mask.
 
-    INPUT MAPPING:
-    ${inputMap}
+INPUTS:
+- IMAGE 1: The original photo to edit.
+- IMAGE 2: The edit mask. PURE WHITE = the area to EDIT. PURE BLACK = areas to leave UNCHANGED.
+${refInputMap}
 
-    EDIT INSTRUCTION: "${userPrompt || 'Improve and refine the highlighted area naturally.'}"
+EDIT INSTRUCTION: "${editInstruction}"
 
-    EXECUTION RULES:
-    1. **SELECTION**: The red/magenta-tinted area is your ONLY canvas. Treat it like a Photoshop selection — paint only inside.
-    2. **PRECISION**: If multiple similar objects exist (e.g., two lamps), ONLY modify the one(s) inside the red highlight. Leave all others exactly as-is.
-    3. **BLENDING**: The edited region must blend seamlessly — match surrounding lighting, color temperature, texture, and noise grain.
-    4. **PRESERVATION**: Every pixel outside the red highlight must be reproduced EXACTLY — no global color correction, no brightness shift, no blur.
-    5. **REALISM**: The result must be photorealistic, high-fidelity, with no visible seams at the highlight boundary.
-    ${refImages.length > 0 ? '6. **REFERENCE**: Use the reference image(s) to determine the style/content to generate inside the highlighted region.' : ''}
+HOW TO EXECUTE:
+1. Locate the WHITE region(s) in IMAGE 2. These are your ONLY edit zones.
+2. Apply the instruction — "${editInstruction}" — ONLY inside those white regions of IMAGE 1.
+3. Every BLACK-mask pixel in the output MUST be a pixel-perfect copy of IMAGE 1 — no color shift, no blur, no reinterpretation.
+4. Blend the edited area naturally: match surrounding lighting, shadows, color temperature.
+5. If there are multiple similar objects (e.g., two chairs, two lights), ONLY modify the one(s) overlapping the white mask.
+${refImages.length > 0 ? '6. Use the reference image(s) for style guidance inside the edited area.' : ''}
 
-    OUTPUT: Full image at same resolution/composition as input, with only the highlighted area modified.
+OUTPUT: The complete edited photo at the same resolution and composition as IMAGE 1.
   `;
 
   parts.push({ text: prompt });

@@ -1254,8 +1254,7 @@ export const App: React.FC = () => {
                 console.log('[Drive] Successfully saved to Drive:', fileName);
             } catch (error) {
                 console.error('[Drive] Failed to auto-save to Drive:', error);
-                // Show error to user
-                alert('Drive 자동 저장 실패: ' + (error as Error).message);
+                // Silently fail — Drive save is non-critical; local history is already updated
             }
         }
     };
@@ -1381,7 +1380,12 @@ export const App: React.FC = () => {
                         }
                     }
 
-                    setHistory(historyItems);
+                    // Merge: keep locally generated items (numeric timestamp IDs) added during this session
+                    setHistory(prev => {
+                        const driveIds = new Set(historyItems.map((h: HistoryItem) => h.id));
+                        const sessionItems = prev.filter(item => !driveIds.has(item.id) && /^\d{13,14}$/.test(item.id));
+                        return [...sessionItems, ...historyItems];
+                    });
                     console.log('[Drive] Loaded', historyItems.length, 'images to library');
                 } catch (error: any) {
                     console.error('[Drive] Failed to load images from Drive:', error);
