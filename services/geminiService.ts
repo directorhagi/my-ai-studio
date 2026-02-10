@@ -664,11 +664,9 @@ export const generateEditedImage = async (
   }
 };
 
-// --- Inpainting helpers ---
-
-// Find bounding box of white (painted) pixels in binarized mask.
-// Returns {x, y, width, height, origW, origH}.
-const getMaskBoundingBox = (maskBase64: string): Promise<{ x: number; y: number; width: number; height: number; origW: number; origH: number }> => {
+// Describe the painted area's position in natural language for the AI prompt.
+// Derived from the mask's bounding box relative to image dimensions.
+const describeSelectionArea = (maskBase64: string): Promise<string> => {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
@@ -677,7 +675,7 @@ const getMaskBoundingBox = (maskBase64: string): Promise<{ x: number; y: number;
       const canvas = document.createElement('canvas');
       canvas.width = origW; canvas.height = origH;
       const ctx = canvas.getContext('2d');
-      if (!ctx) { resolve({ x: 0, y: 0, width: origW, height: origH, origW, origH }); return; }
+      if (!ctx) { resolve('the selected area'); return; }
       ctx.drawImage(img, 0, 0);
       const data = ctx.getImageData(0, 0, origW, origH).data;
       let minX = origW, minY = origH, maxX = 0, maxY = 0, hasWhite = false;
@@ -690,83 +688,28 @@ const getMaskBoundingBox = (maskBase64: string): Promise<{ x: number; y: number;
           }
         }
       }
-      if (!hasWhite) {
-        // No mask painted — return full image bounds
-        resolve({ x: 0, y: 0, width: origW, height: origH, origW, origH });
-        return;
-      }
-      // Add 15% padding so Gemini has context around the selection
-      const pw = Math.round((maxX - minX) * 0.15);
-      const ph = Math.round((maxY - minY) * 0.15);
-      const x = Math.max(0, minX - pw);
-      const y = Math.max(0, minY - ph);
-      const width = Math.min(origW, maxX + pw) - x;
-      const height = Math.min(origH, maxY + ph) - y;
-      resolve({ x, y, width, height, origW, origH });
+      if (!hasWhite) { resolve('the main subject'); return; }
+      const cx = (minX + maxX) / 2 / origW;
+      const cy = (minY + maxY) / 2 / origH;
+      const areaFrac = ((maxX - minX) * (maxY - minY)) / (origW * origH);
+      const hPart = cx < 0.35 ? 'left' : cx > 0.65 ? 'right' : 'center';
+      const vPart = cy < 0.35 ? 'upper' : cy > 0.65 ? 'lower' : 'middle';
+      if (areaFrac > 0.45) { resolve('the entire scene'); return; }
+      if (areaFrac < 0.04) { resolve(`the small object in the ${vPart}-${hPart} area`); return; }
+      resolve(`the ${vPart}-${hPart} area`);
     };
-    img.onerror = () => {
-      const img2 = new Image();
-      img2.onload = () => {
-        const w = img2.naturalWidth || img2.width;
-        const h = img2.naturalHeight || img2.height;
-        resolve({ x: 0, y: 0, width: w, height: h, origW: w, origH: h });
-      };
-      img2.onerror = () => resolve({ x: 0, y: 0, width: 0, height: 0, origW: 0, origH: 0 });
-      img2.src = maskBase64;
-    };
+    img.onerror = () => resolve('the selected area');
     img.src = maskBase64;
   });
 };
 
-// Crop imageBase64 to the given bounding box.
-const cropToBoundingBox = (
-  imageBase64: string,
-  bbox: { x: number; y: number; width: number; height: number }
-): Promise<string> => {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = bbox.width; canvas.height = bbox.height;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) { resolve(imageBase64); return; }
-      ctx.drawImage(img, bbox.x, bbox.y, bbox.width, bbox.height, 0, 0, bbox.width, bbox.height);
-      resolve(canvas.toDataURL('image/png'));
-    };
-    img.onerror = () => resolve(imageBase64);
-    img.src = imageBase64;
-  });
-};
-
-// Place a smaller regionBase64 at bbox position inside a full-size canvas.
-// Everything outside bbox is black — compositing step will use original pixels there.
-const placeRegionInCanvas = (
-  origW: number,
-  origH: number,
-  regionBase64: string,
-  bbox: { x: number; y: number; width: number; height: number }
-): Promise<string> => {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = origW; canvas.height = origH;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) { resolve(regionBase64); return; }
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, origW, origH);
-      ctx.drawImage(img, 0, 0, img.naturalWidth || img.width, img.naturalHeight || img.height, bbox.x, bbox.y, bbox.width, bbox.height);
-      resolve(canvas.toDataURL('image/png'));
-    };
-    img.onerror = () => resolve(regionBase64);
-    img.src = regionBase64;
-  });
-};
-
 // --- Main inpainting function ---
-// Strategy: crop just the masked region → send clean crop + context to Gemini
-// → place result back at bbox → client-side compositing with mask.
-// This avoids asking Gemini to "interpret a mask image", which it cannot do reliably.
+// Strategy: send full original image → Gemini applies change based on text location
+// → client-side compositeMaskResult does pixel-perfect masking.
+//
+// Why NOT crop: Gemini generates images, not in-place edits. A cropped region
+// sent back is misaligned with the original — the compositing breaks.
+// Sending the FULL IMAGE and describing WHERE to change works reliably.
 export const generateInpainting = async (
   imageBase64: string,
   maskBase64: string,
@@ -778,99 +721,62 @@ export const generateInpainting = async (
   const ai = getGenAI();
   const finalSeed = resolveSeed(seed);
 
-  // 1. Find the bounding box of the painted region
-  const bbox = await getMaskBoundingBox(maskBase64);
-  if (bbox.width === 0 || bbox.height === 0) {
-    throw new Error("No mask area detected. Please paint the region you want to modify.");
-  }
+  // Describe the painted area so Gemini knows WHERE to apply the change
+  const locationDesc = await describeSelectionArea(maskBase64);
 
-  // 2. Crop just the masked region from the original (Gemini gets a focused crop)
-  const croppedRegion = await cropToBoundingBox(imageBase64, bbox);
-  const optimizedCrop = await optimizeImage(croppedRegion);
-
-  // 3. Also send full original as context so Gemini can match lighting/color
-  const optimizedContext = await optimizeImage(imageBase64);
-
-  const editInstruction = userPrompt?.trim() || 'Improve and refine this region naturally.';
+  // Full original image (Gemini needs full context to generate a correct full-size output)
+  const optimizedBase = await optimizeImage(imageBase64);
+  const detectedAR = await detectAspectRatio(imageBase64);
 
   const parts: any[] = [
-    // IMAGE 1: The specific region to transform (Gemini's "canvas")
-    {
-      inlineData: {
-        data: optimizedCrop.split(',')[1],
-        mimeType: getMimeType(optimizedCrop)
-      }
-    },
-    // IMAGE 2: Full original for lighting/color context
-    {
-      inlineData: {
-        data: optimizedContext.split(',')[1],
-        mimeType: getMimeType(optimizedContext)
-      }
-    }
+    { inlineData: { data: optimizedBase.split(',')[1], mimeType: getMimeType(optimizedBase) } }
   ];
 
-  // Optional reference images
   for (const ref of refImages) {
     if (ref && typeof ref === 'string') {
-      const optimizedRef = await optimizeImage(ref);
-      parts.push({
-        inlineData: {
-          data: optimizedRef.split(',')[1],
-          mimeType: getMimeType(optimizedRef)
-        }
-      });
+      const opt = await optimizeImage(ref);
+      parts.push({ inlineData: { data: opt.split(',')[1], mimeType: getMimeType(opt) } });
     }
   }
 
-  const prompt = `
-You are a photo editor. You have been given a cropped region from a photo (IMAGE 1) that needs to be transformed.
+  const instruction = userPrompt?.trim() || 'Enhance and improve the area naturally.';
 
-TASK: Apply this transformation to IMAGE 1: "${editInstruction}"
+  // The prompt describes WHAT and WHERE. The WHERE must match locationDesc precisely.
+  // compositeMaskResult handles the pixel-level precision — Gemini just needs to apply the change.
+  const prompt = `You are a professional photo retoucher. Edit this photo by applying a targeted change.
 
-CONTEXT: IMAGE 2 is the full original photo that IMAGE 1 was cropped from. Use it ONLY as a reference to match the lighting, color temperature, and visual style — so your result will look natural when placed back into the scene.
-${refImages.length > 0 ? 'Additional reference images are provided for style guidance.' : ''}
+TARGET AREA: ${locationDesc}
+CHANGE: "${instruction}"
 
-REQUIREMENTS:
-- Apply "${editInstruction}" directly and visibly to the content in IMAGE 1.
-- Match the lighting and color grade of IMAGE 2 so the result blends naturally.
-- Output ONLY a modified version of IMAGE 1 (same crop dimensions).
-- Be decisive — make the change clearly visible. Do not be subtle.
-- Photorealistic result, no artifacts.
-  `;
+Rules:
+1. Apply "${instruction}" CLEARLY AND BOLDLY to ${locationDesc}. Do not be subtle — the change must be obvious.
+2. Keep every other part of the photo exactly as it is.
+3. Output the complete photo at the same composition, just with ${locationDesc} modified.
+4. Photorealistic quality. Match the existing lighting and style.${refImages.length > 0 ? '\n5. Use the reference image for visual/style guidance.' : ''}`;
 
   parts.push({ text: prompt });
-
-  // Use aspect ratio from the crop, not the full image
-  const croppedAspectRatio = await detectAspectRatio(croppedRegion);
 
   try {
     const response = await retryOperation(() => ai.models.generateContent({
       model: modelId || 'gemini-3-pro-image-preview',
       contents: { parts },
-      config: {
-        seed: finalSeed,
-        imageConfig: { aspectRatio: croppedAspectRatio }
-      }
+      config: { seed: finalSeed, imageConfig: { aspectRatio: detectedAR } }
     })) as GenerateContentResponse;
 
-    let croppedResult = '';
+    let resultBase64 = '';
     const candidate = response.candidates?.[0];
-    if (candidate && candidate.content && candidate.content.parts) {
+    if (candidate?.content?.parts) {
       for (const part of candidate.content.parts) {
         if (part.inlineData) {
-          croppedResult = `data:image/png;base64,${part.inlineData.data}`;
+          resultBase64 = `data:image/png;base64,${part.inlineData.data}`;
           break;
         }
       }
     }
 
-    if (!croppedResult) throw new Error("Inpainting failed. Please try again.");
-
-    // 4. Place the generated region back at the original bbox position
-    // compositeMaskResult will then blend this with the original using the mask
-    const fullSizeResult = await placeRegionInCanvas(bbox.origW, bbox.origH, croppedResult, bbox);
-    return { imageUrl: fullSizeResult, seed: finalSeed };
+    if (!resultBase64) throw new Error("Inpainting failed — AI returned no image. Check your API key and try again.");
+    // Full-size result is returned; App.tsx compositeMaskResult blends it with original using mask
+    return { imageUrl: resultBase64, seed: finalSeed };
 
   } catch (error: any) {
     console.error("Gemini Inpainting Error:", error);

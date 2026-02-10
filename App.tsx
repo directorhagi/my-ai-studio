@@ -1897,7 +1897,10 @@ export const App: React.FC = () => {
             setInpaintResultItems(prev => [...prev, newItem]);
             setDetailItem(newItem);
 
-        } catch(e) { console.error(e); } finally { setIsInpainting(false); }
+        } catch(e: any) {
+            console.error('Inpaint error:', e);
+            setStudioState(prev => ({ ...prev, error: e?.message || 'Inpainting failed. Please try again.' }));
+        } finally { setIsInpainting(false); }
     };
 
     const handleImageLoad = () => {
