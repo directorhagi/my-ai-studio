@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { User } from 'firebase/auth';
 import { Category, ClothingItem, AppState, AspectRatio, HistoryItem, StylePreset, ImageSize, FitType, PoseType, BackgroundType, ClothingLength, GenderType, BatchItem } from './types';
-import { generateFittingImage, generateEditedImage, generateInpainting, binarizeMask } from './services/geminiService';
+import { generateFittingImage, generateEditedImage, generateImageEdit, generateMaskedInpaint } from './services/geminiService';
 import { hasApiKey, saveApiKey, getMaskedApiKey, deleteApiKey } from './services/apiKeyStorage';
 import { onAuthStateChange, signInWithGoogle, signOut, getGoogleAccessToken } from './services/authService';
 import { uploadImageToDrive, listImagesFromDrive, downloadImageFromDrive, downloadMetadataFromDrive, deleteImageFromDrive } from './services/driveService';
@@ -332,71 +332,6 @@ const CustomSelect: React.FC<CustomSelectProps> = ({ value, onChange, options, i
            ))}
         </div>
       )}
-    </div>
-  );
-};
-
-const CubeVisualizer: React.FC<{ rotation: number; tilt: number; zoom: number; onChange: (r: number, t: number) => void }> = ({ rotation, tilt, zoom, onChange }) => {
-  const isDragging = useRef(false);
-  const startMouse = useRef({ x: 0, y: 0 });
-  const startVal = useRef({ r: 0, t: 0 });
-
-  const handleMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault();
-    isDragging.current = true;
-    startMouse.current = { x: e.clientX, y: e.clientY };
-    startVal.current = { r: rotation, t: tilt };
-    document.body.style.cursor = 'grabbing';
-  };
-
-  useEffect(() => {
-    const handleMouseMove = (e: MouseEvent) => {
-      if (!isDragging.current) return;
-      const deltaX = e.clientX - startMouse.current.x;
-      const deltaY = e.clientY - startMouse.current.y;
-      const sensitivity = 0.5;
-      let newRot = startVal.current.r + (deltaX * sensitivity);
-      let newTilt = startVal.current.t - (deltaY * sensitivity); 
-      if (newRot > 180) newRot -= 360;
-      if (newRot < -180) newRot += 360;
-      newTilt = Math.max(-90, Math.min(90, newTilt));
-      onChange(Math.round(newRot), Math.round(newTilt));
-    };
-    const handleMouseUp = () => {
-      if (isDragging.current) {
-        isDragging.current = false;
-        document.body.style.cursor = '';
-      }
-    };
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-    return () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-  }, [onChange, rotation, tilt]);
-
-  const visualScale = zoom >= 0 ? 1 + (zoom / 100) : 1 / (1 + Math.abs(zoom)/100);
-
-  const cubeStyle: React.CSSProperties = {
-    transform: `rotateX(${tilt}deg) rotateY(${rotation}deg) scale(${visualScale})`,
-    transformStyle: 'preserve-3d',
-  };
-
-  return (
-    <div className="w-full h-48 flex items-center justify-center bg-[#0a0a0a] rounded-xl relative overflow-hidden mb-6 border border-white/5 shadow-inner cursor-grab active:cursor-grabbing group" onMouseDown={handleMouseDown}>
-       <div className="perspective-container pointer-events-none" style={{ perspective: '800px' }}>
-          <div className="cube w-20 h-20 relative transition-transform duration-75 ease-out" style={cubeStyle}>
-             <div className="absolute w-20 h-20 bg-slate-800/80 border border-slate-600/50 flex items-center justify-center text-slate-300 font-bold text-xs" style={{ transform: 'translateZ(40px)' }}>FRONT</div>
-             <div className="absolute w-20 h-20 bg-slate-800/80 border border-slate-600/50 flex items-center justify-center text-slate-300 font-bold text-xs" style={{ transform: 'rotateY(180deg) translateZ(40px)' }}>BACK</div>
-             <div className="absolute w-20 h-20 bg-slate-700/80 border border-slate-600/50 flex items-center justify-center text-slate-300 font-bold text-xs" style={{ transform: 'rotateY(90deg) translateZ(40px)' }}>R</div>
-             <div className="absolute w-20 h-20 bg-slate-700/80 border border-slate-600/50 flex items-center justify-center text-slate-300 font-bold text-xs" style={{ transform: 'rotateY(-90deg) translateZ(40px)' }}>L</div>
-             <div className="absolute w-20 h-20 bg-slate-600/80 border border-slate-600/50 flex items-center justify-center text-slate-300 font-bold text-xs" style={{ transform: 'rotateX(90deg) translateZ(40px)' }}>TOP</div>
-             <div className="absolute w-20 h-20 bg-slate-600/80 border border-slate-600/50 flex items-center justify-center text-slate-300 font-bold text-xs" style={{ transform: 'rotateX(-90deg) translateZ(40px)' }}>BTM</div>
-          </div>
-       </div>
-       <div className="absolute top-2 left-2 text-[8px] text-slate-500 font-bold uppercase opacity-50 group-hover:opacity-100 transition-opacity">Drag to Rotate</div>
-       <div className="absolute bottom-2 right-2 text-[8px] text-slate-500 font-mono">R:{rotation}° T:{tilt}° Z:{zoom}</div>
     </div>
   );
 };
@@ -1134,6 +1069,7 @@ export const App: React.FC = () => {
     const isPanningRef = useRef(false);
     const startPanMouse = useRef({ x: 0, y: 0 });
     const startPanOffset = useRef({ x: 0, y: 0 });
+    const panStart = useRef<{ x: number, y: number } | null>(null);
 
     const t = translations[lang];
     const cancelControllers = useRef<Record<string, AbortController>>({});
@@ -1487,9 +1423,9 @@ export const App: React.FC = () => {
 
 
     const [editImage, setEditImage] = useState<string | null>(null);
-    const [editParams, setEditParams] = useState({ rotation: 0, tilt: 0, zoom: 0, lighting: 50, shadow: 50, relighting: false });
+    const [editParams, setEditParams] = useState({ zoom: 0, lighting: 50, shadow: 50, relighting: false });
     const [editImageScale, setEditImageScale] = useState(1);
-    const defaultEditParams = { rotation: 0, tilt: 0, zoom: 0, lighting: 50, shadow: 50, relighting: false };
+    const defaultEditParams = { zoom: 0, lighting: 50, shadow: 50, relighting: false };
     const [editPrompt, setEditPrompt] = useState('');
     const [editResult, setEditResult] = useState<string | null>(null);
     const [isEditing, setIsEditing] = useState(false);
@@ -1868,47 +1804,47 @@ export const App: React.FC = () => {
         } catch(e) { console.error(e); } finally { setIsEditing(false); }
     };
 
+    // Mask-based or text-based inpainting
     const runInpaint = async () => {
-        if (isInpainting || !inpaintBase || !canvasRef.current) return;
+        if (isInpainting || !inpaintBase) return;
+        if (!inpaintPrompt.trim()) {
+            setStudioState(prev => ({ ...prev, error: '편집 내용을 입력해주세요. 예: "신발을 슬리퍼로 바꿔줘"' }));
+            return;
+        }
         if (!await checkApiKey()) return;
-        // Clear previous error
         setStudioState(prev => ({ ...prev, error: null }));
         setIsInpainting(true);
         try {
             const seedToUse = studioState.useRandomSeed ? undefined : studioState.seed;
-            const rawMask = canvasRef.current.toDataURL('image/png');
-            const binMask = await binarizeMask(rawMask);
 
-            // Check if user has actually painted something
-            const hasStroke = await ((): Promise<boolean> => {
-                return new Promise(res => {
-                    const img = new Image();
-                    img.onload = () => {
-                        const c = document.createElement('canvas');
-                        c.width = img.width; c.height = img.height;
-                        const cx = c.getContext('2d');
-                        if (!cx) { res(false); return; }
-                        cx.drawImage(img, 0, 0);
-                        const d = cx.getImageData(0, 0, c.width, c.height).data;
-                        for (let i = 0; i < d.length; i += 4) {
-                            if (d[i] > 128) { res(true); return; }
+            // Check if mask has any white pixels (user drew something)
+            let hasMask = false;
+            let maskBase64 = '';
+            if (canvasRef.current) {
+                const ctx = canvasRef.current.getContext('2d');
+                if (ctx) {
+                    const imgData = ctx.getImageData(0, 0, canvasRef.current.width, canvasRef.current.height);
+                    for (let i = 0; i < imgData.data.length; i += 4) {
+                        if (imgData.data[i] > 128 || imgData.data[i+1] > 128 || imgData.data[i+2] > 128) {
+                            hasMask = true;
+                            break;
                         }
-                        res(false);
-                    };
-                    img.onerror = () => res(false);
-                    img.src = binMask;
-                });
-            })();
-
-            if (!hasStroke) {
-                setStudioState(prev => ({ ...prev, error: '먼저 편집할 영역을 브러시로 그려주세요.' }));
-                return;
+                    }
+                    if (hasMask) {
+                        maskBase64 = canvasRef.current.toDataURL('image/png');
+                    }
+                }
             }
 
-            const result = await generateInpainting(inpaintBase, binMask, inpaintPrompt, inpaintRefImages, studioState.selectedModel, seedToUse);
-            // Use Gemini's full output directly — compositing was causing visible seams
-            // because Gemini generates a new image (slight pose variation) making
-            // pixel-level blending look wrong at mask boundaries.
+            let result;
+            if (hasMask && maskBase64) {
+                // Use mask-based inpainting: crop + edit + composite
+                result = await generateMaskedInpaint(inpaintBase, maskBase64, inpaintPrompt, inpaintRefImages, studioState.selectedModel, seedToUse);
+            } else {
+                // No mask - use simple text-based edit
+                result = await generateImageEdit(inpaintBase, inpaintPrompt, inpaintRefImages, studioState.selectedModel, seedToUse);
+            }
+
             setInpaintResult(result.imageUrl);
 
             const newItem: HistoryItem = {
@@ -1927,8 +1863,8 @@ export const App: React.FC = () => {
             setDetailItem(newItem);
 
         } catch(e: any) {
-            console.error('Inpaint error:', e);
-            setStudioState(prev => ({ ...prev, error: e?.message || 'Inpainting failed. Please try again.' }));
+            console.error('Edit error:', e);
+            setStudioState(prev => ({ ...prev, error: e?.message || '편집 실패. 다시 시도해주세요.' }));
         } finally { setIsInpainting(false); }
     };
 
@@ -1957,6 +1893,36 @@ export const App: React.FC = () => {
         if (newHistory.length > 20) newHistory.shift();
         inpaintHistoryRef.current = newHistory;
         inpaintHistoryStep.current = newHistory.length - 1;
+    };
+
+    // Draw a single point on canvas
+    const drawOnCanvas = (x: number, y: number) => {
+        if (!canvasRef.current) return;
+        const ctx = canvasRef.current.getContext('2d');
+        if (!ctx) return;
+        ctx.globalAlpha = brushOpacity / 100;
+        ctx.fillStyle = inpaintTool === 'eraser' ? 'black' : 'white';
+        ctx.beginPath();
+        ctx.arc(x, y, brushSize / 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+    };
+
+    // Draw a line between two points (for smooth strokes)
+    const drawLine = (x1: number, y1: number, x2: number, y2: number) => {
+        if (!canvasRef.current) return;
+        const ctx = canvasRef.current.getContext('2d');
+        if (!ctx) return;
+        ctx.globalAlpha = brushOpacity / 100;
+        ctx.strokeStyle = inpaintTool === 'eraser' ? 'black' : 'white';
+        ctx.lineWidth = brushSize;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
     };
 
     // Flood fill (paint bucket) — fills contiguous same-color region
@@ -2366,32 +2332,11 @@ export const App: React.FC = () => {
                                             </div>
                                             <input type="number" value={studioState.seed === -1 ? '' : studioState.seed} onChange={e => setStudioState(p => ({ ...p, seed: parseInt(e.target.value) || 0 }))} disabled={studioState.useRandomSeed} placeholder={studioState.useRandomSeed ? "Random" : "Enter Seed"} className={`w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[10px] text-slate-300 font-mono transition-opacity ${studioState.useRandomSeed ? 'opacity-50' : 'opacity-100'}`} />
                                         </div>
-                                        <CubeVisualizer rotation={editParams.rotation} tilt={editParams.tilt} zoom={editParams.zoom} onChange={(r, ti) => setEditParams(p => ({ ...p, rotation: r, tilt: ti }))} />
                                         <div className="flex items-center justify-between mb-3">
                                             <span className="text-[9px] font-bold uppercase text-slate-500 tracking-wider">Parameters</span>
                                             <button onClick={() => setEditParams({ ...defaultEditParams })} className="text-[8px] font-bold uppercase text-slate-600 hover:text-slate-300 border border-white/10 hover:border-white/20 rounded px-2 py-0.5 transition-colors">Reset All</button>
                                         </div>
                                         <div className="space-y-4 mb-6">
-                                            <div>
-                                                <div className="flex items-center justify-between mb-1.5">
-                                                    <label className="text-[9px] font-bold uppercase text-slate-500">{t.rotation ?? 'Rotation'}</label>
-                                                    <div className="flex items-center gap-1.5">
-                                                        <span className="text-[9px] font-mono text-indigo-400">{editParams.rotation}°</span>
-                                                        {editParams.rotation !== 0 && <button onClick={() => setEditParams(p => ({...p, rotation: 0}))} className="text-[8px] text-slate-600 hover:text-slate-400 transition-colors"><i className="fas fa-undo-alt"></i></button>}
-                                                    </div>
-                                                </div>
-                                                <input type="range" min="-180" max="180" value={editParams.rotation} onChange={e => setEditParams(p => ({ ...p, rotation: parseInt(e.target.value) }))} className="w-full accent-indigo-500" />
-                                            </div>
-                                            <div>
-                                                <div className="flex items-center justify-between mb-1.5">
-                                                    <label className="text-[9px] font-bold uppercase text-slate-500">{t.tilt ?? 'Tilt'}</label>
-                                                    <div className="flex items-center gap-1.5">
-                                                        <span className="text-[9px] font-mono text-indigo-400">{editParams.tilt}°</span>
-                                                        {editParams.tilt !== 0 && <button onClick={() => setEditParams(p => ({...p, tilt: 0}))} className="text-[8px] text-slate-600 hover:text-slate-400 transition-colors"><i className="fas fa-undo-alt"></i></button>}
-                                                    </div>
-                                                </div>
-                                                <input type="range" min="-90" max="90" value={editParams.tilt} onChange={e => setEditParams(p => ({ ...p, tilt: parseInt(e.target.value) }))} className="w-full accent-indigo-500" />
-                                            </div>
                                             <div>
                                                 <div className="flex items-center justify-between mb-1.5">
                                                     <label className="text-[9px] font-bold uppercase text-slate-500">{t.zoom}</label>
@@ -2508,57 +2453,123 @@ export const App: React.FC = () => {
 
                     {currentPage === 'INPAINTING' && (
                         <div className="flex w-full h-full overflow-hidden relative">
-                             <button onClick={() => setIsMobileSettingsOpen(true)} className="md:hidden absolute top-4 left-4 z-30 w-10 h-10 bg-indigo-600 text-white rounded-full shadow-lg flex items-center justify-center animate-in fade-in zoom-in"><i className="fas fa-sliders-h"></i></button>
-                             {isMobileSettingsOpen && (<div className="fixed inset-0 bg-black/80 z-[60] md:hidden backdrop-blur-sm" onClick={() => setIsMobileSettingsOpen(false)}></div>)}
-                            <div style={{ width: isMobile ? undefined : sidebarWidth }} className={`flex-shrink-0 z-[70] transition-transform duration-300 ease-out fixed inset-y-0 left-0 h-full w-[85vw] bg-[#0a0a0a] shadow-2xl md:shadow-none md:bg-transparent md:relative md:h-auto md:w-auto md:translate-x-0 ${isMobileSettingsOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
+                            {/* Mobile settings button */}
+                            <button
+                                onClick={() => setIsMobileSettingsOpen(true)}
+                                className="md:hidden absolute top-4 left-4 z-30 w-10 h-10 bg-pink-600 text-white rounded-full shadow-lg flex items-center justify-center"
+                            >
+                                <i className="fas fa-paint-brush"></i>
+                            </button>
+
+                            {isMobileSettingsOpen && (
+                                <div className="fixed inset-0 bg-black/80 z-[60] md:hidden backdrop-blur-sm" onClick={() => setIsMobileSettingsOpen(false)}></div>
+                            )}
+
+                            {/* Mask Tools Sidebar */}
+                            <div
+                                style={{ width: isMobile ? undefined : 220 }}
+                                className={`
+                                    flex-shrink-0 z-[70] transition-transform duration-300 ease-out
+                                    fixed inset-y-0 left-0 h-full w-[75vw] bg-[#0a0a0a] shadow-2xl md:shadow-none md:bg-transparent
+                                    md:relative md:h-auto md:w-auto md:translate-x-0
+                                    ${isMobileSettingsOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+                                `}
+                            >
                                 <div className="absolute inset-0 md:top-4 md:left-4 md:bottom-8 md:right-2 bg-[#0a0a0a]/95 backdrop-blur-xl border-r md:border border-white/10 md:rounded-2xl shadow-xl overflow-hidden flex flex-col">
-                                    <div className="p-4 border-b border-white/10 bg-white/5 flex justify-between items-center">
-                                        <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">{t.maskTools}</h3>
+                                    <div className="p-4 border-b border-white/10 flex items-center justify-between bg-white/5">
+                                        <h3 className="text-xs font-black uppercase tracking-widest text-slate-400">Mask Tools</h3>
                                         <button onClick={() => setIsMobileSettingsOpen(false)} className="md:hidden text-slate-500"><i className="fas fa-times"></i></button>
                                     </div>
                                     <div className="overflow-y-auto p-4 custom-scrollbar flex-1">
-                                        <div className="mb-4 border-b border-white/5 pb-4">
-                                            <div className="flex items-center justify-between mb-2">
-                                                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">{t.seed}</span>
-                                                <label className="flex items-center gap-1 cursor-pointer">
-                                                    <input type="checkbox" checked={studioState.useRandomSeed} onChange={e => setStudioState(p => ({ ...p, useRandomSeed: e.target.checked }))} className="w-3 h-3 rounded border-white/20 bg-transparent checked:bg-indigo-500" />
-                                                    <span className="text-[9px] font-medium text-slate-500">{t.randomize}</span>
-                                                </label>
+                                        {/* Brush Size */}
+                                        <div className="mb-4">
+                                            <div className="flex items-center justify-between mb-1.5">
+                                                <label className="text-[9px] font-bold uppercase text-slate-500">Brush Size</label>
+                                                <span className="text-[9px] font-mono text-pink-400">{brushSize}px</span>
                                             </div>
-                                            <input type="number" value={studioState.seed === -1 ? '' : studioState.seed} onChange={e => setStudioState(p => ({ ...p, seed: parseInt(e.target.value) || 0 }))} disabled={studioState.useRandomSeed} placeholder={studioState.useRandomSeed ? "Random" : "Enter Seed"} className={`w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[10px] text-slate-300 font-mono transition-opacity ${studioState.useRandomSeed ? 'opacity-50' : 'opacity-100'}`} />
+                                            <input type="range" min="5" max="100" value={brushSize} onChange={e => setBrushSize(parseInt(e.target.value))} className="w-full accent-pink-500" />
                                         </div>
-                                        <div className="space-y-4 mb-5">
-                                            <div>
-                                                <div className="flex items-center justify-between mb-1.5"><label className="text-[9px] font-bold uppercase text-slate-500">{t.brushSize}</label><span className="text-[9px] font-mono text-pink-400">{brushSize}px</span></div>
-                                                <input type="range" min="5" max="100" value={brushSize} onChange={e => setBrushSize(parseInt(e.target.value))} className="w-full accent-pink-500" />
+                                        {/* Brush Opacity */}
+                                        <div className="mb-4">
+                                            <div className="flex items-center justify-between mb-1.5">
+                                                <label className="text-[9px] font-bold uppercase text-slate-500">Opacity</label>
+                                                <span className="text-[9px] font-mono text-pink-400">{brushOpacity}%</span>
                                             </div>
-                                            <div>
-                                                <div className="flex items-center justify-between mb-1.5"><label className="text-[9px] font-bold uppercase text-slate-500">Opacity</label><span className="text-[9px] font-mono text-pink-400">{brushOpacity}%</span></div>
-                                                <input type="range" min="10" max="100" value={brushOpacity} onChange={e => setBrushOpacity(parseInt(e.target.value))} className="w-full accent-pink-500" />
+                                            <input type="range" min="10" max="100" value={brushOpacity} onChange={e => setBrushOpacity(parseInt(e.target.value))} className="w-full accent-pink-500" />
+                                        </div>
+                                        {/* Tool Selection */}
+                                        <div className="mb-4">
+                                            <label className="text-[9px] font-bold uppercase text-slate-500 block mb-2">Tool</label>
+                                            <div className="flex gap-2">
+                                                <button onClick={() => setInpaintTool('brush')} className={`flex-1 py-2 rounded-lg text-[10px] font-bold transition-all ${inpaintTool === 'brush' ? 'bg-pink-600 text-white' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}>
+                                                    <i className="fas fa-paint-brush mr-1"></i> Brush
+                                                </button>
+                                                <button onClick={() => setInpaintTool('eraser')} className={`flex-1 py-2 rounded-lg text-[10px] font-bold transition-all ${inpaintTool === 'eraser' ? 'bg-pink-600 text-white' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}>
+                                                    <i className="fas fa-eraser mr-1"></i> Eraser
+                                                </button>
                                             </div>
-                                            <div>
-                                                <div className="flex items-center justify-between mb-1.5"><label className="text-[9px] font-bold uppercase text-slate-500">Hardness</label><span className="text-[9px] font-mono text-pink-400">{brushHardness}%</span></div>
-                                                <input type="range" min="0" max="100" value={brushHardness} onChange={e => setBrushHardness(parseInt(e.target.value))} className="w-full accent-pink-500" />
+                                        </div>
+                                        {/* Undo/Redo */}
+                                        <div className="mb-4">
+                                            <label className="text-[9px] font-bold uppercase text-slate-500 block mb-2">History</label>
+                                            <div className="flex gap-2">
+                                                <button onClick={performInpaintUndo} className="flex-1 py-2 rounded-lg text-[10px] font-bold bg-white/5 text-slate-400 hover:bg-white/10 transition-all">
+                                                    <i className="fas fa-undo mr-1"></i> Undo
+                                                </button>
+                                                <button onClick={performInpaintRedo} className="flex-1 py-2 rounded-lg text-[10px] font-bold bg-white/5 text-slate-400 hover:bg-white/10 transition-all">
+                                                    <i className="fas fa-redo mr-1"></i> Redo
+                                                </button>
                                             </div>
                                         </div>
-                                        <div className="grid grid-cols-3 gap-2 mb-4">
-                                            <button onClick={() => setInpaintTool('brush')} className={`py-3 rounded-lg text-xs font-bold uppercase transition-all flex flex-col items-center gap-1 ${inpaintTool === 'brush' ? 'bg-pink-600 text-white shadow-lg shadow-pink-500/30' : 'bg-white/5 text-slate-500 hover:bg-white/10'}`}><i className="fas fa-paint-brush"></i> {t.brush}</button>
-                                            <button onClick={() => setInpaintTool('eraser')} className={`py-3 rounded-lg text-xs font-bold uppercase transition-all flex flex-col items-center gap-1 ${inpaintTool === 'eraser' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30' : 'bg-white/5 text-slate-500 hover:bg-white/10'}`}><i className="fas fa-eraser"></i> {t.eraser}</button>
-                                            <button onClick={() => setInpaintTool('fill')} className={`py-3 rounded-lg text-xs font-bold uppercase transition-all flex flex-col items-center gap-1 ${inpaintTool === 'fill' ? 'bg-teal-600 text-white shadow-lg shadow-teal-500/30' : 'bg-white/5 text-slate-500 hover:bg-white/10'}`}><i className="fas fa-fill-drip"></i> Fill</button>
+                                        {/* Fill/Clear All */}
+                                        <div className="mb-4 pt-2 border-t border-white/5">
+                                            <label className="text-[9px] font-bold uppercase text-slate-500 block mb-2">Quick Actions</label>
+                                            <div className="flex gap-2">
+                                                <button
+                                                    onClick={() => {
+                                                        if (canvasRef.current) {
+                                                            const ctx = canvasRef.current.getContext('2d');
+                                                            if (ctx) {
+                                                                ctx.fillStyle = 'white';
+                                                                ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+                                                                saveInpaintHistory();
+                                                            }
+                                                        }
+                                                    }}
+                                                    className="flex-1 py-2 rounded-lg text-[10px] font-bold bg-white/10 text-white hover:bg-white/20 transition-all"
+                                                >
+                                                    <i className="fas fa-fill mr-1"></i> Fill All
+                                                </button>
+                                                <button
+                                                    onClick={() => {
+                                                        if (canvasRef.current) {
+                                                            const ctx = canvasRef.current.getContext('2d');
+                                                            if (ctx) {
+                                                                ctx.fillStyle = 'black';
+                                                                ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+                                                                saveInpaintHistory();
+                                                            }
+                                                        }
+                                                    }}
+                                                    className="flex-1 py-2 rounded-lg text-[10px] font-bold bg-white/5 text-slate-400 hover:bg-white/10 transition-all"
+                                                >
+                                                    <i className="fas fa-trash mr-1"></i> Clear
+                                                </button>
+                                            </div>
                                         </div>
-                                        <div className="grid grid-cols-2 gap-2 mb-3">
-                                            <button onClick={performInpaintUndo} className="py-2 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white rounded-lg text-xs font-bold uppercase transition-all flex items-center justify-center gap-1.5"><i className="fas fa-undo text-[10px]"></i> Undo</button>
-                                            <button onClick={performInpaintRedo} className="py-2 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white rounded-lg text-xs font-bold uppercase transition-all flex items-center justify-center gap-1.5"><i className="fas fa-redo text-[10px]"></i> Redo</button>
-                                        </div>
-                                        <div className="grid grid-cols-2 gap-2 mb-3">
-                                            <button onClick={() => { const ctx = canvasRef.current?.getContext('2d'); if(ctx && canvasRef.current) { ctx.fillStyle='white'; ctx.fillRect(0,0,canvasRef.current.width, canvasRef.current.height); saveInpaintHistory(); } }} className="py-2 bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white rounded-lg text-xs font-bold uppercase transition-colors flex items-center justify-center gap-1.5"><i className="fas fa-expand text-[10px]"></i> Fill All</button>
-                                            <button onClick={() => { const ctx = canvasRef.current?.getContext('2d'); if(ctx && canvasRef.current) { ctx.fillStyle='black'; ctx.fillRect(0,0,canvasRef.current.width, canvasRef.current.height); saveInpaintHistory(); } }} className="py-2 bg-white/5 hover:bg-white/10 text-slate-500 hover:text-slate-300 rounded-lg text-xs font-bold uppercase transition-colors flex items-center justify-center gap-1.5"><i className="fas fa-compress text-[10px]"></i> Clear</button>
+                                        {/* Tip */}
+                                        <div className="mt-4 p-3 bg-pink-500/10 border border-pink-500/20 rounded-lg">
+                                            <p className="text-[9px] text-pink-300/80 leading-relaxed">
+                                                <i className="fas fa-lightbulb mr-1"></i>
+                                                편집할 영역을 흰색으로 칠하세요. 칠한 영역만 AI가 수정합니다.
+                                            </p>
                                         </div>
                                     </div>
                                 </div>
-                                <div className="hidden md:flex absolute top-4 right-0 bottom-8 w-4 cursor-col-resize z-50 items-center justify-center group hover:bg-indigo-500/5 rounded-r-xl transition-colors" onMouseDown={startResizing}><div className="w-1 h-8 bg-slate-700 rounded-full group-hover:bg-indigo-500 transition-colors"></div></div>
                             </div>
-                            <div className="flex-1 flex flex-col min-w-0 bg-transparent relative w-full h-full select-none overflow-hidden" onWheel={handleCanvasContainerWheel} onMouseDown={handleCanvasMouseDown} onMouseMove={handleCanvasMouseMove} onMouseUp={handleCanvasMouseUp} onMouseLeave={handleCanvasMouseUp} style={{ cursor: cursorMode, touchAction: 'none' }}>
+
+                            {/* Canvas Area */}
+                            <div className="flex-1 flex flex-col min-w-0 bg-transparent relative w-full h-full">
                                 {studioState.error && (
                                     <div className="absolute top-4 left-4 right-4 z-50 p-3 bg-red-500/10 border border-red-500/30 rounded-xl flex items-center gap-3">
                                         <i className="fas fa-exclamation-triangle text-red-500 text-sm flex-shrink-0"></i>
@@ -2566,7 +2577,7 @@ export const App: React.FC = () => {
                                         <button onClick={() => setStudioState(p => ({...p, error: null}))} className="text-red-400 hover:text-red-200 transition-colors flex-shrink-0"><i className="fas fa-times text-xs"></i></button>
                                     </div>
                                 )}
-                                <div className="absolute inset-0 z-0 flex items-center justify-center">
+                                <div className="absolute inset-0 z-0 flex items-center justify-center overflow-hidden">
                                     {!inpaintBase ? (
                                         <DropZone onFileSelect={(b) => setInpaintBase(b)} label={t.uploadTitle} isDarkMode={true} variant="fullscreen" className="w-full h-full pb-20 !cursor-default" />
                                     ) : (
@@ -2577,30 +2588,116 @@ export const App: React.FC = () => {
                                                     setInpaintResult(null);
                                                     setInpaintRefImages([]);
                                                     setInpaintResultItems([]);
-                                                    const ctx = canvasRef.current?.getContext('2d');
-                                                    if (ctx && canvasRef.current) {
-                                                        ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-                                                    }
                                                 }}
-                                                className="absolute top-8 right-8 z-[60] w-10 h-10 bg-red-500/90 hover:bg-red-600 text-white rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110"
+                                                className="absolute top-4 right-4 z-[60] w-10 h-10 bg-red-500/90 hover:bg-red-600 text-white rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110"
                                                 title="Clear image"
                                             >
                                                 <i className="fas fa-times"></i>
                                             </button>
-                                            {/* Reset zoom/pan button */}
-                                            <button
-                                                onClick={() => setCanvasTransform({ scale: 1, x: 0, y: 0 })}
-                                                className="absolute top-8 right-20 z-[60] w-10 h-10 bg-slate-700/90 hover:bg-slate-600 text-white rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110"
-                                                title="Reset zoom & pan"
+                                            <div
+                                                className="flex-1 flex items-center justify-center p-4 pb-2 overflow-hidden min-h-0"
+                                                style={{ cursor: cursorMode === 'grab' ? 'grab' : cursorMode === 'grabbing' ? 'grabbing' : 'crosshair' }}
+                                                onWheel={(e) => {
+                                                    e.preventDefault();
+                                                    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+                                                    setCanvasTransform(prev => ({ ...prev, scale: Math.min(5, Math.max(0.2, prev.scale + delta)) }));
+                                                }}
+                                                onMouseDown={(e) => {
+                                                    if (isSpacePressed.current) {
+                                                        isPanningRef.current = true;
+                                                        setCursorMode('grabbing');
+                                                        panStart.current = { x: e.clientX - canvasTransform.x, y: e.clientY - canvasTransform.y };
+                                                    }
+                                                }}
+                                                onMouseMove={(e) => {
+                                                    if (isPanningRef.current && panStart.current) {
+                                                        setCanvasTransform(prev => ({ ...prev, x: e.clientX - panStart.current!.x, y: e.clientY - panStart.current!.y }));
+                                                    }
+                                                    // Update brush cursor position
+                                                    if (cursorRef.current && !isSpacePressed.current) {
+                                                        const rect = e.currentTarget.getBoundingClientRect();
+                                                        cursorRef.current.style.left = `${e.clientX - rect.left}px`;
+                                                        cursorRef.current.style.top = `${e.clientY - rect.top}px`;
+                                                        cursorRef.current.style.display = 'block';
+                                                    }
+                                                }}
+                                                onMouseUp={() => {
+                                                    isPanningRef.current = false;
+                                                    if (!isSpacePressed.current) setCursorMode('default');
+                                                }}
+                                                onMouseLeave={() => {
+                                                    if (cursorRef.current) cursorRef.current.style.display = 'none';
+                                                }}
                                             >
-                                                <i className="fas fa-compress-arrows-alt text-xs"></i>
-                                            </button>
-                                            <div className="flex-1 flex items-center justify-center p-6 pb-4 overflow-hidden min-h-0">
-                                                <div style={{ transform: `translate(${canvasTransform.x}px, ${canvasTransform.y}px) scale(${canvasTransform.scale})`, transformOrigin: 'center', transition: isPanningRef.current ? 'none' : 'transform 0.1s ease-out' }} className="relative shadow-2xl">
-                                                    <img ref={imgRef} src={inpaintBase} onLoad={handleImageLoad} className="pointer-events-none select-none max-w-none" style={{ display: 'block', maxHeight: inpaintResultItems.length > 0 ? '65vh' : '75vh', maxWidth: '80vw' }} />
-                                                    <canvas ref={canvasRef} className="absolute inset-0 touch-none" style={{ mixBlendMode: 'screen', opacity: 0.6 }} />
+                                                {/* Brush Cursor */}
+                                                <div
+                                                    ref={cursorRef}
+                                                    className="pointer-events-none absolute z-[100] rounded-full border-2 border-white mix-blend-difference"
+                                                    style={{
+                                                        width: brushSize * canvasTransform.scale,
+                                                        height: brushSize * canvasTransform.scale,
+                                                        transform: 'translate(-50%, -50%)',
+                                                        display: 'none'
+                                                    }}
+                                                />
+                                                <div
+                                                    className="relative"
+                                                    style={{
+                                                        transform: `translate(${canvasTransform.x}px, ${canvasTransform.y}px) scale(${canvasTransform.scale})`,
+                                                        transformOrigin: 'center center'
+                                                    }}
+                                                >
+                                                    <img
+                                                        ref={imgRef}
+                                                        src={inpaintBase}
+                                                        className="rounded-lg shadow-2xl"
+                                                        style={{ maxHeight: 'calc(100vh - 200px)', maxWidth: '100%' }}
+                                                        onLoad={handleImageLoad}
+                                                        draggable={false}
+                                                    />
+                                                    <canvas
+                                                        ref={canvasRef}
+                                                        className="absolute top-0 left-0 w-full h-full rounded-lg"
+                                                        style={{ opacity: 0.5, mixBlendMode: 'screen' }}
+                                                        onMouseDown={(e) => {
+                                                            if (isSpacePressed.current) return;
+                                                            setIsDrawing(true);
+                                                            const rect = e.currentTarget.getBoundingClientRect();
+                                                            const scaleX = canvasRef.current!.width / rect.width;
+                                                            const scaleY = canvasRef.current!.height / rect.height;
+                                                            const x = (e.clientX - rect.left) * scaleX;
+                                                            const y = (e.clientY - rect.top) * scaleY;
+                                                            lastDrawPos.current = { x, y };
+                                                            drawOnCanvas(x, y);
+                                                        }}
+                                                        onMouseMove={(e) => {
+                                                            if (!isDrawing || isSpacePressed.current) return;
+                                                            const rect = e.currentTarget.getBoundingClientRect();
+                                                            const scaleX = canvasRef.current!.width / rect.width;
+                                                            const scaleY = canvasRef.current!.height / rect.height;
+                                                            const x = (e.clientX - rect.left) * scaleX;
+                                                            const y = (e.clientY - rect.top) * scaleY;
+                                                            if (lastDrawPos.current) {
+                                                                drawLine(lastDrawPos.current.x, lastDrawPos.current.y, x, y);
+                                                            }
+                                                            lastDrawPos.current = { x, y };
+                                                        }}
+                                                        onMouseUp={() => {
+                                                            if (isDrawing) {
+                                                                setIsDrawing(false);
+                                                                lastDrawPos.current = null;
+                                                                saveInpaintHistory();
+                                                            }
+                                                        }}
+                                                        onMouseLeave={() => {
+                                                            if (isDrawing) {
+                                                                setIsDrawing(false);
+                                                                lastDrawPos.current = null;
+                                                                saveInpaintHistory();
+                                                            }
+                                                        }}
+                                                    />
                                                 </div>
-                                                {inpaintBase && !isSpacePressed.current && (<div ref={cursorRef} className="fixed pointer-events-none rounded-full border border-white bg-white/20 z-[100] -translate-x-1/2 -translate-y-1/2 shadow-[0_0_10px_rgba(0,0,0,0.5)]" style={{ width: brushSize, height: brushSize }} />)}
                                                 {isInpainting && <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-[50] rounded-lg"><i className="fas fa-circle-notch fa-spin text-white text-3xl"></i></div>}
                                             </div>
                                             {inpaintResultItems.length > 0 && (
