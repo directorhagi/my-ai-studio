@@ -83,8 +83,38 @@ export const binarizeMask = (maskBase64: string): Promise<string> => {
   });
 };
 
-// Apply geometric transforms (rotation, tilt via perspective, zoom) directly on canvas
-// Guarantees visible transformation regardless of AI interpretation
+// Compute the minimum fill-scale needed so the transformed image covers
+// the entire canvas without black corners.
+// Transform chain applied to image coords: T → R → Fs → S(shear) → Z
+// For each canvas corner C, inverse maps to image via:
+//   a = R^(-1)(C - translate)
+//   required Fs ≥ |a.x - skew*a.y| / (w/2)  and  |a.y| / (h/2)
+const computeFillScale = (w: number, h: number, rotation: number, tilt: number): number => {
+  const rotRad = rotation * Math.PI / 180;
+  const skew = tilt !== 0 ? Math.tan((tilt * Math.PI) / 180) * 0.3 : 0;
+  // Inverse rotation by -rotRad
+  const cosR = Math.cos(-rotRad);
+  const sinR = Math.sin(-rotRad);
+  const hw = w / 2, hh = h / 2;
+  // All 4 canvas corners (canvas coords 0→w, 0→h)
+  const corners: [number, number][] = [[0, 0], [w, 0], [0, h], [w, h]];
+  let maxFs = 1;
+  for (const [cx, cy] of corners) {
+    // T^(-1): subtract canvas center
+    const tx = cx - hw, ty = cy - hh;
+    // R^(-1): apply inverse rotation
+    const ax = tx * cosR - ty * sinR;
+    const ay = tx * sinR + ty * cosR;
+    // Required Fs so S^(-1)(a/Fs) stays in ±(hw, hh)
+    const fsX = Math.abs(ax - skew * ay) / hw;
+    const fsY = Math.abs(ay) / hh;
+    maxFs = Math.max(maxFs, fsX, fsY);
+  }
+  return maxFs;
+};
+
+// Apply geometric transforms (rotation, tilt via skew, zoom) directly on canvas.
+// Uses computeFillScale to guarantee zero black corners for any rotation+tilt combo.
 const applyGeometricTransforms = (
   base64: string,
   rotation: number,
@@ -107,28 +137,23 @@ const applyGeometricTransforms = (
       ctx.save();
       ctx.translate(w / 2, h / 2);
 
-      // Rotation with auto-scale to eliminate black corners.
-      // Formula: scale = max((w*cosA + h*sinA)/w, (h*cosA + w*sinA)/h)
-      // This ensures the rotated image completely covers the canvas.
-      if (rotation !== 0) {
-        const rotRad = Math.abs(rotation * Math.PI / 180);
-        const cosA = Math.abs(Math.cos(rotRad));
-        const sinA = Math.abs(Math.sin(rotRad));
-        const fillScale = Math.max(
-          (w * cosA + h * sinA) / w,
-          (h * cosA + w * sinA) / h
-        );
-        ctx.rotate((rotation * Math.PI) / 180);
-        ctx.scale(fillScale, fillScale);
+      // Step 1: Rotation
+      if (rotation !== 0) ctx.rotate((rotation * Math.PI) / 180);
+
+      // Step 2: Fill-scale — computed for rotation+tilt combined,
+      // applied between R and S so it compensates both transforms.
+      if (rotation !== 0 || tilt !== 0) {
+        const fs = computeFillScale(w, h, rotation, tilt);
+        if (fs > 1) ctx.scale(fs, fs);
       }
 
-      // Tilt: simulate as vertical skew (applied after rotation)
+      // Step 3: Tilt as vertical skew
       if (tilt !== 0) {
         const skew = Math.tan((tilt * Math.PI) / 180) * 0.3;
         ctx.transform(1, skew, 0, 1, 0, 0);
       }
 
-      // Additional user zoom on top of auto fill-scale
+      // Step 4: User zoom (additional, on top of fill-scale)
       if (zoom !== 0) {
         const zoomScale = zoom > 0 ? 1 + zoom / 100 : 1 / (1 + Math.abs(zoom) / 100);
         ctx.scale(zoomScale, zoomScale);
@@ -639,6 +664,109 @@ export const generateEditedImage = async (
   }
 };
 
+// --- Inpainting helpers ---
+
+// Find bounding box of white (painted) pixels in binarized mask.
+// Returns {x, y, width, height, origW, origH}.
+const getMaskBoundingBox = (maskBase64: string): Promise<{ x: number; y: number; width: number; height: number; origW: number; origH: number }> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const origW = img.naturalWidth || img.width;
+      const origH = img.naturalHeight || img.height;
+      const canvas = document.createElement('canvas');
+      canvas.width = origW; canvas.height = origH;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { resolve({ x: 0, y: 0, width: origW, height: origH, origW, origH }); return; }
+      ctx.drawImage(img, 0, 0);
+      const data = ctx.getImageData(0, 0, origW, origH).data;
+      let minX = origW, minY = origH, maxX = 0, maxY = 0, hasWhite = false;
+      for (let y = 0; y < origH; y++) {
+        for (let x = 0; x < origW; x++) {
+          if (data[(y * origW + x) * 4] > 128) {
+            if (x < minX) minX = x; if (x > maxX) maxX = x;
+            if (y < minY) minY = y; if (y > maxY) maxY = y;
+            hasWhite = true;
+          }
+        }
+      }
+      if (!hasWhite) {
+        // No mask painted — return full image bounds
+        resolve({ x: 0, y: 0, width: origW, height: origH, origW, origH });
+        return;
+      }
+      // Add 15% padding so Gemini has context around the selection
+      const pw = Math.round((maxX - minX) * 0.15);
+      const ph = Math.round((maxY - minY) * 0.15);
+      const x = Math.max(0, minX - pw);
+      const y = Math.max(0, minY - ph);
+      const width = Math.min(origW, maxX + pw) - x;
+      const height = Math.min(origH, maxY + ph) - y;
+      resolve({ x, y, width, height, origW, origH });
+    };
+    img.onerror = () => {
+      const img2 = new Image();
+      img2.onload = () => {
+        const w = img2.naturalWidth || img2.width;
+        const h = img2.naturalHeight || img2.height;
+        resolve({ x: 0, y: 0, width: w, height: h, origW: w, origH: h });
+      };
+      img2.onerror = () => resolve({ x: 0, y: 0, width: 0, height: 0, origW: 0, origH: 0 });
+      img2.src = maskBase64;
+    };
+    img.src = maskBase64;
+  });
+};
+
+// Crop imageBase64 to the given bounding box.
+const cropToBoundingBox = (
+  imageBase64: string,
+  bbox: { x: number; y: number; width: number; height: number }
+): Promise<string> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = bbox.width; canvas.height = bbox.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { resolve(imageBase64); return; }
+      ctx.drawImage(img, bbox.x, bbox.y, bbox.width, bbox.height, 0, 0, bbox.width, bbox.height);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = () => resolve(imageBase64);
+    img.src = imageBase64;
+  });
+};
+
+// Place a smaller regionBase64 at bbox position inside a full-size canvas.
+// Everything outside bbox is black — compositing step will use original pixels there.
+const placeRegionInCanvas = (
+  origW: number,
+  origH: number,
+  regionBase64: string,
+  bbox: { x: number; y: number; width: number; height: number }
+): Promise<string> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = origW; canvas.height = origH;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { resolve(regionBase64); return; }
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, origW, origH);
+      ctx.drawImage(img, 0, 0, img.naturalWidth || img.width, img.naturalHeight || img.height, bbox.x, bbox.y, bbox.width, bbox.height);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = () => resolve(regionBase64);
+    img.src = regionBase64;
+  });
+};
+
+// --- Main inpainting function ---
+// Strategy: crop just the masked region → send clean crop + context to Gemini
+// → place result back at bbox → client-side compositing with mask.
+// This avoids asking Gemini to "interpret a mask image", which it cannot do reliably.
 export const generateInpainting = async (
   imageBase64: string,
   maskBase64: string,
@@ -649,70 +777,72 @@ export const generateInpainting = async (
 ): Promise<{ imageUrl: string, seed: number }> => {
   const ai = getGenAI();
   const finalSeed = resolveSeed(seed);
-  const detectedAspectRatio = await detectAspectRatio(imageBase64);
 
-  // maskBase64 is already binarized by the caller (App.tsx runInpaint)
-  const optimizedBase = await optimizeImage(imageBase64);
-  const optimizedMask = await optimizeImage(maskBase64);
+  // 1. Find the bounding box of the painted region
+  const bbox = await getMaskBoundingBox(maskBase64);
+  if (bbox.width === 0 || bbox.height === 0) {
+    throw new Error("No mask area detected. Please paint the region you want to modify.");
+  }
+
+  // 2. Crop just the masked region from the original (Gemini gets a focused crop)
+  const croppedRegion = await cropToBoundingBox(imageBase64, bbox);
+  const optimizedCrop = await optimizeImage(croppedRegion);
+
+  // 3. Also send full original as context so Gemini can match lighting/color
+  const optimizedContext = await optimizeImage(imageBase64);
+
+  const editInstruction = userPrompt?.trim() || 'Improve and refine this region naturally.';
 
   const parts: any[] = [
+    // IMAGE 1: The specific region to transform (Gemini's "canvas")
     {
       inlineData: {
-        data: optimizedBase.split(',')[1],
-        mimeType: getMimeType(optimizedBase)
+        data: optimizedCrop.split(',')[1],
+        mimeType: getMimeType(optimizedCrop)
       }
     },
+    // IMAGE 2: Full original for lighting/color context
     {
       inlineData: {
-        data: optimizedMask.split(',')[1],
-        mimeType: getMimeType(optimizedMask)
+        data: optimizedContext.split(',')[1],
+        mimeType: getMimeType(optimizedContext)
       }
     }
   ];
 
-  let refInputMap = '';
-  let currentIndex = 3;
-
+  // Optional reference images
   for (const ref of refImages) {
     if (ref && typeof ref === 'string') {
-       const optimizedRef = await optimizeImage(ref);
-       parts.push({
+      const optimizedRef = await optimizeImage(ref);
+      parts.push({
         inlineData: {
           data: optimizedRef.split(',')[1],
           mimeType: getMimeType(optimizedRef)
         }
       });
-      refInputMap += `- IMAGE ${currentIndex}: Style/content reference for the edit.\n`;
-      currentIndex++;
     }
   }
 
-  const editInstruction = userPrompt?.trim() || 'Naturally improve and enhance the masked area.';
-
   const prompt = `
-[ROLE: PROFESSIONAL PHOTO EDITOR]
+You are a photo editor. You have been given a cropped region from a photo (IMAGE 1) that needs to be transformed.
 
-TASK: Apply a targeted edit to the photo using the provided mask.
+TASK: Apply this transformation to IMAGE 1: "${editInstruction}"
 
-INPUTS:
-- IMAGE 1: The original photo to edit.
-- IMAGE 2: The edit mask. PURE WHITE = the area to EDIT. PURE BLACK = areas to leave UNCHANGED.
-${refInputMap}
+CONTEXT: IMAGE 2 is the full original photo that IMAGE 1 was cropped from. Use it ONLY as a reference to match the lighting, color temperature, and visual style — so your result will look natural when placed back into the scene.
+${refImages.length > 0 ? 'Additional reference images are provided for style guidance.' : ''}
 
-EDIT INSTRUCTION: "${editInstruction}"
-
-HOW TO EXECUTE:
-1. Locate the WHITE region(s) in IMAGE 2. These are your ONLY edit zones.
-2. Apply the instruction — "${editInstruction}" — ONLY inside those white regions of IMAGE 1.
-3. Every BLACK-mask pixel in the output MUST be a pixel-perfect copy of IMAGE 1 — no color shift, no blur, no reinterpretation.
-4. Blend the edited area naturally: match surrounding lighting, shadows, color temperature.
-5. If there are multiple similar objects (e.g., two chairs, two lights), ONLY modify the one(s) overlapping the white mask.
-${refImages.length > 0 ? '6. Use the reference image(s) for style guidance inside the edited area.' : ''}
-
-OUTPUT: The complete edited photo at the same resolution and composition as IMAGE 1.
+REQUIREMENTS:
+- Apply "${editInstruction}" directly and visibly to the content in IMAGE 1.
+- Match the lighting and color grade of IMAGE 2 so the result blends naturally.
+- Output ONLY a modified version of IMAGE 1 (same crop dimensions).
+- Be decisive — make the change clearly visible. Do not be subtle.
+- Photorealistic result, no artifacts.
   `;
 
   parts.push({ text: prompt });
+
+  // Use aspect ratio from the crop, not the full image
+  const croppedAspectRatio = await detectAspectRatio(croppedRegion);
 
   try {
     const response = await retryOperation(() => ai.models.generateContent({
@@ -720,25 +850,28 @@ OUTPUT: The complete edited photo at the same resolution and composition as IMAG
       contents: { parts },
       config: {
         seed: finalSeed,
-        imageConfig: {
-          aspectRatio: detectedAspectRatio,
-        }
+        imageConfig: { aspectRatio: croppedAspectRatio }
       }
     })) as GenerateContentResponse;
 
-    let resultBase64 = '';
+    let croppedResult = '';
     const candidate = response.candidates?.[0];
     if (candidate && candidate.content && candidate.content.parts) {
       for (const part of candidate.content.parts) {
         if (part.inlineData) {
-          resultBase64 = `data:image/png;base64,${part.inlineData.data}`;
+          croppedResult = `data:image/png;base64,${part.inlineData.data}`;
           break;
         }
       }
     }
 
-    if (!resultBase64) throw new Error("Inpainting failed. Please try again.");
-    return { imageUrl: resultBase64, seed: finalSeed };
+    if (!croppedResult) throw new Error("Inpainting failed. Please try again.");
+
+    // 4. Place the generated region back at the original bbox position
+    // compositeMaskResult will then blend this with the original using the mask
+    const fullSizeResult = await placeRegionInCanvas(bbox.origW, bbox.origH, croppedResult, bbox);
+    return { imageUrl: fullSizeResult, seed: finalSeed };
+
   } catch (error: any) {
     console.error("Gemini Inpainting Error:", error);
     throw error;
