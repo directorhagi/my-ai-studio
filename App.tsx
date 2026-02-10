@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { User } from 'firebase/auth';
 import { Category, ClothingItem, AppState, AspectRatio, HistoryItem, StylePreset, ImageSize, FitType, PoseType, BackgroundType, ClothingLength, GenderType, BatchItem } from './types';
-import { generateFittingImage, generateEditedImage, generateInpainting, compositeMaskResult } from './services/geminiService';
+import { generateFittingImage, generateEditedImage, generateInpainting, compositeMaskResult, binarizeMask } from './services/geminiService';
 import { hasApiKey, saveApiKey, getMaskedApiKey, deleteApiKey } from './services/apiKeyStorage';
 import { onAuthStateChange, signInWithGoogle, signOut, getGoogleAccessToken } from './services/authService';
 import { uploadImageToDrive, listImagesFromDrive, downloadImageFromDrive, downloadMetadataFromDrive, deleteImageFromDrive } from './services/driveService';
@@ -1870,10 +1870,12 @@ export const App: React.FC = () => {
         setIsInpainting(true);
         try {
             const seedToUse = studioState.useRandomSeed ? undefined : studioState.seed;
-            const mask = canvasRef.current.toDataURL('image/png');
-            const result = await generateInpainting(inpaintBase, mask, inpaintPrompt, inpaintRefImages, studioState.selectedModel, seedToUse);
+            const rawMask = canvasRef.current.toDataURL('image/png');
+            // Binarize mask for both API call (inside generateInpainting) and compositing
+            const binMask = await binarizeMask(rawMask);
+            const result = await generateInpainting(inpaintBase, binMask, inpaintPrompt, inpaintRefImages, studioState.selectedModel, seedToUse);
             // Composite result with original — preserves all non-masked pixels exactly
-            const composited = await compositeMaskResult(inpaintBase, result.imageUrl, mask);
+            const composited = await compositeMaskResult(inpaintBase, result.imageUrl, binMask);
             setInpaintResult(composited);
 
             const newItem: HistoryItem = {
@@ -2541,6 +2543,14 @@ export const App: React.FC = () => {
                                                 title="Clear image"
                                             >
                                                 <i className="fas fa-times"></i>
+                                            </button>
+                                            {/* Reset zoom/pan button */}
+                                            <button
+                                                onClick={() => setCanvasTransform({ scale: 1, x: 0, y: 0 })}
+                                                className="absolute top-8 right-20 z-[60] w-10 h-10 bg-slate-700/90 hover:bg-slate-600 text-white rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110"
+                                                title="Reset zoom & pan"
+                                            >
+                                                <i className="fas fa-compress-arrows-alt text-xs"></i>
                                             </button>
                                             <div className="flex-1 flex items-center justify-center p-6 pb-4 overflow-hidden min-h-0">
                                                 <div style={{ transform: `translate(${canvasTransform.x}px, ${canvasTransform.y}px) scale(${canvasTransform.scale})`, transformOrigin: 'center', transition: isPanningRef.current ? 'none' : 'transform 0.1s ease-out' }} className="relative shadow-2xl">
