@@ -474,11 +474,16 @@ const DetailModal: React.FC<{ item: HistoryItem; onClose: () => void; onUseImage
             onMouseLeave={handleMouseUp}
             ref={imageContainerRef}
          >
-            <img 
-                src={item.url} 
-                className="max-w-full max-h-full object-contain shadow-lg transition-transform duration-75 ease-out" 
+            <img
+                src={item.url}
+                className="max-w-full max-h-full object-contain shadow-lg transition-transform duration-75 ease-out"
                 style={{ transform: `translate(${position.x}px, ${position.y}px) scale(${zoom})` }}
-                draggable={false}
+                draggable={zoom <= 1}
+                onDragStart={(e) => {
+                    if (zoom > 1) { e.preventDefault(); return; }
+                    const fileName = `${item.type}_${item.date}.png`;
+                    e.dataTransfer.setData('DownloadURL', `image/png:${fileName}:${item.url}`);
+                }}
             />
             <div className="absolute top-4 right-4 flex gap-2">
                 <button 
@@ -772,7 +777,7 @@ const FloatingPromptBar: React.FC<FloatingPromptBarProps> = ({
                     <CustomSelect 
                         value={selectedSize} 
                         onChange={(v) => setSize(v as ImageSize)}
-                        options={sizes.map(s => ({ value: s, label: s, disabled: s === '4K' }))}
+                        options={sizes.map(s => ({ value: s, label: s }))}
                     />
                     {numberOfImages && setNumberOfImages && (
                         <CustomSelect 
@@ -1448,6 +1453,16 @@ export const App: React.FC = () => {
         }
     };
 
+    const performInpaintRedo = () => {
+        if (inpaintHistoryStep.current < inpaintHistoryRef.current.length - 1) {
+            inpaintHistoryStep.current++;
+            const ctx = canvasRef.current?.getContext('2d');
+            if (ctx && inpaintHistoryRef.current[inpaintHistoryStep.current]) {
+                ctx.putImageData(inpaintHistoryRef.current[inpaintHistoryStep.current], 0, 0);
+            }
+        }
+    };
+
     const performUndo = useCallback(() => {
         if (currentPage === 'STUDIO' && studioHistoryRef.current.length > 1) {
             studioHistoryRef.current.pop();
@@ -1473,6 +1488,7 @@ export const App: React.FC = () => {
     const [editResult, setEditResult] = useState<string | null>(null);
     const [isEditing, setIsEditing] = useState(false);
     const [editRefImages, setEditRefImages] = useState<string[]>([]);
+    const [editResultItems, setEditResultItems] = useState<HistoryItem[]>([]);
 
     const [inpaintBase, setInpaintBase] = useState<string | null>(null);
     const [inpaintPrompt, setInpaintPrompt] = useState('');
@@ -1480,15 +1496,19 @@ export const App: React.FC = () => {
     const [isInpainting, setIsInpainting] = useState(false);
     const [inpaintRefImages, setInpaintRefImages] = useState<string[]>([]);
     const [inpaintTool, setInpaintTool] = useState<'brush' | 'eraser'>('brush');
+    const [inpaintResultItems, setInpaintResultItems] = useState<HistoryItem[]>([]);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const cursorRef = useRef<HTMLDivElement>(null);
     const imgRef = useRef<HTMLImageElement>(null);
     const [isDrawing, setIsDrawing] = useState(false);
     const [brushSize, setBrushSize] = useState(20);
+    const [brushOpacity, setBrushOpacity] = useState(100);
+    const [brushHardness, setBrushHardness] = useState(100);
     const [cursorMode, setCursorMode] = useState<'default' | 'grab' | 'grabbing'>('default');
 
     // Library multi-select
     const [selectedImages, setSelectedImages] = useState<Set<string>>(new Set());
+    const [libraryColumns, setLibraryColumns] = useState<number>(4);
     
     const lastDrawPos = useRef<{x: number, y: number} | null>(null);
 
@@ -1625,9 +1645,16 @@ export const App: React.FC = () => {
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
                 e.preventDefault();
                 performUndo();
+            }
+
+            if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+                e.preventDefault();
+                if (currentPage === 'INPAINTING') {
+                    performInpaintRedo();
+                }
             }
 
             if (e.code === 'Space') {
@@ -1815,14 +1842,23 @@ export const App: React.FC = () => {
             const seedToUse = studioState.useRandomSeed ? undefined : studioState.seed;
             const result = await generateEditedImage(editImage, editParams, editPrompt, editRefImages, studioState.aspectRatio, studioState.selectedModel, seedToUse);
             setEditResult(result.imageUrl);
-            
+
             const newItem: HistoryItem = {
                 id: Date.now().toString(), url: result.imageUrl, date: Date.now(), type: 'EDIT', liked: false,
-                metadata: { prompt: editPrompt, refImages: editRefImages, modelName: studioState.selectedModel, seed: result.seed }
+                metadata: {
+                    prompt: editPrompt,
+                    refImages: editRefImages,
+                    modelName: studioState.selectedModel,
+                    seed: result.seed,
+                    aspectRatio: studioState.aspectRatio,
+                    size: studioState.imageSize,
+                    editParams: { ...editParams },
+                }
             };
             addToHistoryAndDrive(newItem);
+            setEditResultItems(prev => [...prev, newItem]);
             setDetailItem(newItem);
-            
+
         } catch(e) { console.error(e); } finally { setIsEditing(false); }
     };
 
@@ -1835,14 +1871,22 @@ export const App: React.FC = () => {
             const mask = canvasRef.current.toDataURL('image/png');
             const result = await generateInpainting(inpaintBase, mask, inpaintPrompt, inpaintRefImages, studioState.selectedModel, seedToUse);
             setInpaintResult(result.imageUrl);
-            
+
             const newItem: HistoryItem = {
                 id: Date.now().toString(), url: result.imageUrl, date: Date.now(), type: 'INPAINTING', liked: false,
-                metadata: { prompt: inpaintPrompt, refImages: inpaintRefImages, modelName: studioState.selectedModel, seed: result.seed }
+                metadata: {
+                    prompt: inpaintPrompt,
+                    refImages: inpaintRefImages,
+                    modelName: studioState.selectedModel,
+                    seed: result.seed,
+                    aspectRatio: studioState.aspectRatio,
+                    size: studioState.imageSize,
+                }
             };
             addToHistoryAndDrive(newItem);
+            setInpaintResultItems(prev => [...prev, newItem]);
             setDetailItem(newItem);
-            
+
         } catch(e) { console.error(e); } finally { setIsInpainting(false); }
     };
 
@@ -1902,10 +1946,20 @@ export const App: React.FC = () => {
 
                 const ctx = canvasRef.current.getContext('2d');
                 if (ctx) {
-                    ctx.fillStyle = inpaintTool === 'eraser' ? 'black' : 'white';
+                    ctx.globalAlpha = inpaintTool === 'eraser' ? 1 : brushOpacity / 100;
+                    if (inpaintTool === 'brush' && brushHardness < 100) {
+                        const r = brushSize / 2;
+                        const grad = ctx.createRadialGradient(x, y, r * (brushHardness / 100), x, y, r);
+                        grad.addColorStop(0, 'rgba(255,255,255,1)');
+                        grad.addColorStop(1, 'rgba(255,255,255,0)');
+                        ctx.fillStyle = grad;
+                    } else {
+                        ctx.fillStyle = inpaintTool === 'eraser' ? 'black' : 'white';
+                    }
                     ctx.beginPath();
                     ctx.arc(x, y, brushSize / 2, 0, Math.PI * 2);
                     ctx.fill();
+                    ctx.globalAlpha = 1;
                 }
             }
         }
@@ -1942,6 +1996,7 @@ export const App: React.FC = () => {
         if (isDrawing && !isSpacePressed.current) {
             const ctx = canvasRef.current.getContext('2d');
             if (ctx && lastDrawPos.current) {
+                ctx.globalAlpha = inpaintTool === 'eraser' ? 1 : brushOpacity / 100;
                 ctx.strokeStyle = inpaintTool === 'eraser' ? 'black' : 'white';
                 ctx.lineWidth = brushSize;
                 ctx.lineCap = 'round';
@@ -1950,6 +2005,7 @@ export const App: React.FC = () => {
                 ctx.moveTo(lastDrawPos.current.x, lastDrawPos.current.y);
                 ctx.lineTo(x, y);
                 ctx.stroke();
+                ctx.globalAlpha = 1;
                 lastDrawPos.current = { x, y };
             }
         }
@@ -2227,10 +2283,36 @@ export const App: React.FC = () => {
                                             <input type="number" value={studioState.seed === -1 ? '' : studioState.seed} onChange={e => setStudioState(p => ({ ...p, seed: parseInt(e.target.value) || 0 }))} disabled={studioState.useRandomSeed} placeholder={studioState.useRandomSeed ? "Random" : "Enter Seed"} className={`w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[10px] text-slate-300 font-mono transition-opacity ${studioState.useRandomSeed ? 'opacity-50' : 'opacity-100'}`} />
                                         </div>
                                         <CubeVisualizer rotation={editParams.rotation} tilt={editParams.tilt} zoom={editParams.zoom} onChange={(r, ti) => setEditParams(p => ({ ...p, rotation: r, tilt: ti }))} />
-                                        <div className="space-y-6 mb-6">
-                                            <div><label className="text-[9px] font-bold uppercase text-slate-500 mb-2 block">{t.zoom}</label><input type="range" min="-50" max="100" value={editParams.zoom} onChange={e => setEditParams(p => ({ ...p, zoom: parseInt(e.target.value) }))} className="w-full accent-indigo-500" /></div>
-                                            <div><label className="text-[9px] font-bold uppercase text-slate-500 mb-2 block">{t.lighting}</label><input type="range" min="0" max="100" value={editParams.lighting} onChange={e => setEditParams(p => ({ ...p, lighting: parseInt(e.target.value) }))} className="w-full accent-yellow-500" /></div>
-                                            <div><label className="text-[9px] font-bold uppercase text-slate-500 mb-2 block">{t.shadows}</label><input type="range" min="0" max="100" value={editParams.shadow} onChange={e => setEditParams(p => ({ ...p, shadow: parseInt(e.target.value) }))} className="w-full accent-slate-500" /></div>
+                                        <div className="space-y-4 mb-6">
+                                            <div>
+                                                <div className="flex items-center justify-between mb-1.5"><label className="text-[9px] font-bold uppercase text-slate-500">{t.rotation ?? 'Rotation'}</label><span className="text-[9px] font-mono text-indigo-400">{editParams.rotation}°</span></div>
+                                                <input type="range" min="-180" max="180" value={editParams.rotation} onChange={e => setEditParams(p => ({ ...p, rotation: parseInt(e.target.value) }))} className="w-full accent-indigo-500" />
+                                            </div>
+                                            <div>
+                                                <div className="flex items-center justify-between mb-1.5"><label className="text-[9px] font-bold uppercase text-slate-500">{t.tilt ?? 'Tilt'}</label><span className="text-[9px] font-mono text-indigo-400">{editParams.tilt}°</span></div>
+                                                <input type="range" min="-90" max="90" value={editParams.tilt} onChange={e => setEditParams(p => ({ ...p, tilt: parseInt(e.target.value) }))} className="w-full accent-indigo-500" />
+                                            </div>
+                                            <div>
+                                                <div className="flex items-center justify-between mb-1.5"><label className="text-[9px] font-bold uppercase text-slate-500">{t.zoom}</label><span className="text-[9px] font-mono text-sky-400">{editParams.zoom > 0 ? `+${editParams.zoom}` : editParams.zoom}</span></div>
+                                                <input type="range" min="-50" max="100" value={editParams.zoom} onChange={e => setEditParams(p => ({ ...p, zoom: parseInt(e.target.value) }))} className="w-full accent-sky-500" />
+                                            </div>
+                                            <div>
+                                                <div className="flex items-center justify-between mb-1.5"><label className="text-[9px] font-bold uppercase text-slate-500">{t.lighting}</label><span className="text-[9px] font-mono text-yellow-400">{editParams.lighting}</span></div>
+                                                <input type="range" min="0" max="100" value={editParams.lighting} onChange={e => setEditParams(p => ({ ...p, lighting: parseInt(e.target.value) }))} className="w-full accent-yellow-500" />
+                                            </div>
+                                            <div>
+                                                <div className="flex items-center justify-between mb-1.5"><label className="text-[9px] font-bold uppercase text-slate-500">{t.shadows}</label><span className="text-[9px] font-mono text-slate-400">{editParams.shadow}</span></div>
+                                                <input type="range" min="0" max="100" value={editParams.shadow} onChange={e => setEditParams(p => ({ ...p, shadow: parseInt(e.target.value) }))} className="w-full accent-slate-500" />
+                                            </div>
+                                            <div className="flex items-center justify-between pt-1">
+                                                <label className="text-[9px] font-bold uppercase text-slate-500">Relighting</label>
+                                                <button
+                                                    onClick={() => setEditParams(p => ({ ...p, relighting: !p.relighting }))}
+                                                    className={`relative w-9 h-5 rounded-full transition-colors ${editParams.relighting ? 'bg-yellow-500' : 'bg-white/10'}`}
+                                                >
+                                                    <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${editParams.relighting ? 'translate-x-4' : 'translate-x-0'}`} />
+                                                </button>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -2241,22 +2323,48 @@ export const App: React.FC = () => {
                                     {!editImage ? (
                                         <DropZone onFileSelect={setEditImage} label={t.uploadTitle} isDarkMode={true} variant="fullscreen" className="w-full h-full pb-20" />
                                     ) : (
-                                        <div className="w-full h-full flex items-center justify-center p-6 pb-40 relative">
+                                        <div className="w-full h-full flex flex-col relative">
                                             <button
                                                 onClick={() => {
                                                     setEditImage(null);
                                                     setEditResult(null);
                                                     setEditRefImages([]);
+                                                    setEditResultItems([]);
                                                 }}
                                                 className="absolute top-8 right-8 z-10 w-10 h-10 bg-red-500/90 hover:bg-red-600 text-white rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110"
                                                 title="Clear image"
                                             >
                                                 <i className="fas fa-times"></i>
                                             </button>
-                                            <div className="relative w-full h-full flex items-center justify-center">
-                                                <img src={editResult || editImage} className="max-h-full max-w-full rounded-lg shadow-2xl object-contain" />
-                                                {isEditing && <div className="absolute inset-0 bg-black/50 flex items-center justify-center rounded-lg"><i className="fas fa-circle-notch fa-spin text-white text-3xl"></i></div>}
+                                            <div className="flex-1 flex items-center justify-center p-6 pb-4 min-h-0">
+                                                <div className="relative max-h-full max-w-full flex items-center justify-center">
+                                                    <img src={editImage} className="max-h-full max-w-full rounded-lg shadow-2xl object-contain" style={{ maxHeight: editResultItems.length > 0 ? 'calc(100vh - 280px)' : 'calc(100vh - 180px)' }} />
+                                                    {isEditing && <div className="absolute inset-0 bg-black/50 flex items-center justify-center rounded-lg"><i className="fas fa-circle-notch fa-spin text-white text-3xl"></i></div>}
+                                                </div>
                                             </div>
+                                            {editResultItems.length > 0 && (
+                                                <div className="flex-shrink-0 px-6 pb-20 pt-2 border-t border-white/5">
+                                                    <div className="flex items-center gap-1 mb-2">
+                                                        <span className="text-[9px] font-bold uppercase text-slate-500 tracking-wider">생성 결과</span>
+                                                        <span className="text-[9px] text-slate-600">({editResultItems.length})</span>
+                                                    </div>
+                                                    <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                                                        {editResultItems.map((item, idx) => (
+                                                            <button
+                                                                key={item.id}
+                                                                onClick={() => setDetailItem(item)}
+                                                                className="flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 border-white/10 hover:border-indigo-500 transition-all relative group"
+                                                                title={`결과 ${idx + 1}`}
+                                                            >
+                                                                <img src={item.url} className="w-full h-full object-cover" />
+                                                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                                                    <i className="fas fa-expand text-white text-[10px]"></i>
+                                                                </div>
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                 </div>
@@ -2286,12 +2394,32 @@ export const App: React.FC = () => {
                                             </div>
                                             <input type="number" value={studioState.seed === -1 ? '' : studioState.seed} onChange={e => setStudioState(p => ({ ...p, seed: parseInt(e.target.value) || 0 }))} disabled={studioState.useRandomSeed} placeholder={studioState.useRandomSeed ? "Random" : "Enter Seed"} className={`w-full bg-white/5 border border-white/10 rounded-lg px-2 py-1.5 text-[10px] text-slate-300 font-mono transition-opacity ${studioState.useRandomSeed ? 'opacity-50' : 'opacity-100'}`} />
                                         </div>
-                                        <div className="mb-6"><label className="text-[9px] font-bold uppercase text-slate-500 mb-2 block">{t.brushSize}</label><div className="flex items-center gap-3"><input type="range" min="5" max="100" value={brushSize} onChange={e => setBrushSize(parseInt(e.target.value))} className="flex-1 accent-pink-500" /><span className="text-xs font-mono w-8 text-right text-slate-400">{brushSize}px</span></div></div>
-                                        <div className="grid grid-cols-2 gap-2 mb-6">
+                                        <div className="space-y-4 mb-5">
+                                            <div>
+                                                <div className="flex items-center justify-between mb-1.5"><label className="text-[9px] font-bold uppercase text-slate-500">{t.brushSize}</label><span className="text-[9px] font-mono text-pink-400">{brushSize}px</span></div>
+                                                <input type="range" min="5" max="100" value={brushSize} onChange={e => setBrushSize(parseInt(e.target.value))} className="w-full accent-pink-500" />
+                                            </div>
+                                            <div>
+                                                <div className="flex items-center justify-between mb-1.5"><label className="text-[9px] font-bold uppercase text-slate-500">Opacity</label><span className="text-[9px] font-mono text-pink-400">{brushOpacity}%</span></div>
+                                                <input type="range" min="10" max="100" value={brushOpacity} onChange={e => setBrushOpacity(parseInt(e.target.value))} className="w-full accent-pink-500" />
+                                            </div>
+                                            <div>
+                                                <div className="flex items-center justify-between mb-1.5"><label className="text-[9px] font-bold uppercase text-slate-500">Hardness</label><span className="text-[9px] font-mono text-pink-400">{brushHardness}%</span></div>
+                                                <input type="range" min="0" max="100" value={brushHardness} onChange={e => setBrushHardness(parseInt(e.target.value))} className="w-full accent-pink-500" />
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2 mb-4">
                                             <button onClick={() => setInpaintTool('brush')} className={`py-3 rounded-lg text-xs font-bold uppercase transition-all flex flex-col items-center gap-1 ${inpaintTool === 'brush' ? 'bg-pink-600 text-white shadow-lg shadow-pink-500/30' : 'bg-white/5 text-slate-500 hover:bg-white/10'}`}><i className="fas fa-paint-brush"></i> {t.brush}</button>
                                             <button onClick={() => setInpaintTool('eraser')} className={`py-3 rounded-lg text-xs font-bold uppercase transition-all flex flex-col items-center gap-1 ${inpaintTool === 'eraser' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30' : 'bg-white/5 text-slate-500 hover:bg-white/10'}`}><i className="fas fa-eraser"></i> {t.eraser}</button>
                                         </div>
-                                        <button onClick={() => { setInpaintResult(null); const ctx = canvasRef.current?.getContext('2d'); if(ctx && canvasRef.current) { ctx.fillStyle='black'; ctx.fillRect(0,0,canvasRef.current.width, canvasRef.current.height); saveInpaintHistory(); } }} className="w-full py-2 mb-6 bg-white/10 hover:bg-white/20 text-slate-300 rounded-lg text-xs font-bold uppercase transition-colors">{t.clearMask}</button>
+                                        <div className="grid grid-cols-2 gap-2 mb-3">
+                                            <button onClick={performInpaintUndo} className="py-2 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white rounded-lg text-xs font-bold uppercase transition-all flex items-center justify-center gap-1.5"><i className="fas fa-undo text-[10px]"></i> Undo</button>
+                                            <button onClick={performInpaintRedo} className="py-2 bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white rounded-lg text-xs font-bold uppercase transition-all flex items-center justify-center gap-1.5"><i className="fas fa-redo text-[10px]"></i> Redo</button>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2 mb-3">
+                                            <button onClick={() => { const ctx = canvasRef.current?.getContext('2d'); if(ctx && canvasRef.current) { ctx.fillStyle='white'; ctx.fillRect(0,0,canvasRef.current.width, canvasRef.current.height); saveInpaintHistory(); } }} className="py-2 bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white rounded-lg text-xs font-bold uppercase transition-colors flex items-center justify-center gap-1.5"><i className="fas fa-expand text-[10px]"></i> Fill All</button>
+                                            <button onClick={() => { const ctx = canvasRef.current?.getContext('2d'); if(ctx && canvasRef.current) { ctx.fillStyle='black'; ctx.fillRect(0,0,canvasRef.current.width, canvasRef.current.height); saveInpaintHistory(); } }} className="py-2 bg-white/5 hover:bg-white/10 text-slate-500 hover:text-slate-300 rounded-lg text-xs font-bold uppercase transition-colors flex items-center justify-center gap-1.5"><i className="fas fa-compress text-[10px]"></i> Clear</button>
+                                        </div>
                                     </div>
                                 </div>
                                 <div className="hidden md:flex absolute top-4 right-0 bottom-8 w-4 cursor-col-resize z-50 items-center justify-center group hover:bg-indigo-500/5 rounded-r-xl transition-colors" onMouseDown={startResizing}><div className="w-1 h-8 bg-slate-700 rounded-full group-hover:bg-indigo-500 transition-colors"></div></div>
@@ -2301,12 +2429,13 @@ export const App: React.FC = () => {
                                     {!inpaintBase ? (
                                         <DropZone onFileSelect={(b) => setInpaintBase(b)} label={t.uploadTitle} isDarkMode={true} variant="fullscreen" className="w-full h-full pb-20 !cursor-default" />
                                     ) : (
-                                        <div className="relative w-full h-full flex items-center justify-center p-6 pb-40 overflow-hidden">
+                                        <div className="relative w-full h-full flex flex-col overflow-hidden">
                                             <button
                                                 onClick={() => {
                                                     setInpaintBase(null);
                                                     setInpaintResult(null);
                                                     setInpaintRefImages([]);
+                                                    setInpaintResultItems([]);
                                                     const ctx = canvasRef.current?.getContext('2d');
                                                     if (ctx && canvasRef.current) {
                                                         ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
@@ -2317,12 +2446,37 @@ export const App: React.FC = () => {
                                             >
                                                 <i className="fas fa-times"></i>
                                             </button>
-                                            <div style={{ transform: `translate(${canvasTransform.x}px, ${canvasTransform.y}px) scale(${canvasTransform.scale})`, transformOrigin: 'center', transition: isPanningRef.current ? 'none' : 'transform 0.1s ease-out' }} className="relative shadow-2xl">
-                                                <img ref={imgRef} src={inpaintResult || inpaintBase} onLoad={handleImageLoad} className="pointer-events-none select-none max-w-none" style={{ display: 'block', maxHeight: '80vh', maxWidth: '80vw' }} />
-                                                <canvas ref={canvasRef} className="absolute inset-0 touch-none" style={{ mixBlendMode: 'screen', opacity: 0.6 }} />
+                                            <div className="flex-1 flex items-center justify-center p-6 pb-4 overflow-hidden min-h-0">
+                                                <div style={{ transform: `translate(${canvasTransform.x}px, ${canvasTransform.y}px) scale(${canvasTransform.scale})`, transformOrigin: 'center', transition: isPanningRef.current ? 'none' : 'transform 0.1s ease-out' }} className="relative shadow-2xl">
+                                                    <img ref={imgRef} src={inpaintBase} onLoad={handleImageLoad} className="pointer-events-none select-none max-w-none" style={{ display: 'block', maxHeight: inpaintResultItems.length > 0 ? '65vh' : '75vh', maxWidth: '80vw' }} />
+                                                    <canvas ref={canvasRef} className="absolute inset-0 touch-none" style={{ mixBlendMode: 'screen', opacity: 0.6 }} />
+                                                </div>
+                                                {inpaintBase && !isSpacePressed.current && (<div ref={cursorRef} className="fixed pointer-events-none rounded-full border border-white bg-white/20 z-[100] -translate-x-1/2 -translate-y-1/2 shadow-[0_0_10px_rgba(0,0,0,0.5)]" style={{ width: brushSize, height: brushSize }} />)}
+                                                {isInpainting && <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-[50] rounded-lg"><i className="fas fa-circle-notch fa-spin text-white text-3xl"></i></div>}
                                             </div>
-                                            {inpaintBase && !inpaintResult && !isSpacePressed.current && (<div ref={cursorRef} className="fixed pointer-events-none rounded-full border border-white bg-white/20 z-[100] -translate-x-1/2 -translate-y-1/2 shadow-[0_0_10px_rgba(0,0,0,0.5)]" style={{ width: brushSize, height: brushSize }} />)}
-                                            {isInpainting && <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-[50] rounded-lg"><i className="fas fa-circle-notch fa-spin text-white text-3xl"></i></div>}
+                                            {inpaintResultItems.length > 0 && (
+                                                <div className="flex-shrink-0 px-6 pb-20 pt-2 border-t border-white/5">
+                                                    <div className="flex items-center gap-1 mb-2">
+                                                        <span className="text-[9px] font-bold uppercase text-slate-500 tracking-wider">생성 결과</span>
+                                                        <span className="text-[9px] text-slate-600">({inpaintResultItems.length})</span>
+                                                    </div>
+                                                    <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                                                        {inpaintResultItems.map((item, idx) => (
+                                                            <button
+                                                                key={item.id}
+                                                                onClick={() => setDetailItem(item)}
+                                                                className="flex-shrink-0 w-16 h-16 rounded-lg overflow-hidden border-2 border-white/10 hover:border-pink-500 transition-all relative group"
+                                                                title={`결과 ${idx + 1}`}
+                                                            >
+                                                                <img src={item.url} className="w-full h-full object-cover" />
+                                                                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                                                    <i className="fas fa-expand text-white text-[10px]"></i>
+                                                                </div>
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     )}
                                 </div>
@@ -2333,22 +2487,54 @@ export const App: React.FC = () => {
 
                     {currentPage === 'LIBRARY' && (
                         <div className="w-full h-full overflow-y-auto custom-scrollbar p-0 pt-4 pb-24 relative">
-                            <div className="flex flex-wrap content-start">
+                            {/* Column control */}
+                            <div className="flex items-center justify-end px-4 pb-3 gap-3">
+                                <span className="text-[9px] text-slate-500 uppercase tracking-wider flex-shrink-0">열 {libraryColumns}</span>
+                                <input
+                                    type="range"
+                                    min="3"
+                                    max="8"
+                                    step="1"
+                                    value={libraryColumns}
+                                    onChange={e => setLibraryColumns(parseInt(e.target.value))}
+                                    className="w-24 accent-indigo-500"
+                                />
+                            </div>
+                            <div className="grid" style={{ gridTemplateColumns: `repeat(${libraryColumns}, 1fr)` }}>
                                 {history.map(item => (
                                     <div
                                         key={item.id}
-                                        className={`relative group overflow-hidden bg-black/20 border shadow-lg transition-all cursor-pointer w-1/2 md:w-1/4 aspect-[3/4] ${
+                                        className={`relative group overflow-hidden bg-black/20 border shadow-lg transition-all cursor-pointer aspect-[3/4] ${
                                             selectedImages.has(item.id) ? 'border-indigo-500 ring-2 ring-indigo-500' : 'border-white/5 hover:border-indigo-500/50'
                                         }`}
                                     >
                                         <div onClick={() => setDetailItem(item)} className="w-full h-full">
-                                            <img src={item.url} className="w-full h-full object-cover" loading="lazy" />
-                                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-3">
-                                                <span className="text-[10px] text-white font-bold uppercase tracking-wider mb-1">{item.type}</span>
-                                                {item.metadata?.prompt && (
-                                                    <span className="text-[8px] text-slate-300 mb-1 line-clamp-2">{item.metadata.prompt}</span>
-                                                )}
-                                                <span className="text-[8px] text-slate-400 font-mono">{new Date(item.date).toLocaleDateString()}</span>
+                                            <img
+                                                src={item.url}
+                                                className="w-full h-full object-cover"
+                                                loading="lazy"
+                                                draggable
+                                                onDragStart={(e) => {
+                                                    const fileName = `${item.type}_${item.date}.png`;
+                                                    e.dataTransfer.setData('DownloadURL', `image/png:${fileName}:${item.url}`);
+                                                }}
+                                            />
+                                            <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between p-2.5">
+                                                <div className="flex flex-wrap gap-1">
+                                                    {item.metadata?.aspectRatio && (
+                                                        <span className="text-[8px] bg-black/50 text-indigo-300 border border-indigo-500/30 rounded px-1.5 py-0.5 font-mono backdrop-blur-sm">{item.metadata.aspectRatio}</span>
+                                                    )}
+                                                    {(item.size || item.metadata?.size) && (
+                                                        <span className="text-[8px] bg-black/50 text-sky-300 border border-sky-500/30 rounded px-1.5 py-0.5 font-mono backdrop-blur-sm">{item.size || item.metadata?.size}</span>
+                                                    )}
+                                                    <span className="text-[8px] bg-black/50 text-slate-300 border border-white/10 rounded px-1.5 py-0.5 font-bold uppercase backdrop-blur-sm">{item.type}</span>
+                                                </div>
+                                                <div>
+                                                    {item.metadata?.prompt && (
+                                                        <span className="text-[8px] text-slate-300 mb-1 line-clamp-2 block">{item.metadata.prompt}</span>
+                                                    )}
+                                                    <span className="text-[8px] text-slate-500 font-mono">{new Date(item.date).toLocaleDateString()}</span>
+                                                </div>
                                             </div>
                                         </div>
                                         <div className="absolute top-2 left-2 z-10">

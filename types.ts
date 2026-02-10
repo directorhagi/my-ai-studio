@@ -59,8 +59,17 @@ export interface HistoryItem {
     aspectRatio?: AspectRatio;
     modelName?: string;
     gender?: GenderType;
-    refImages?: string[]; 
-    seed?: number; // Added: Store seed for reproducibility
+    refImages?: string[];
+    seed?: number;
+    size?: string;
+    editParams?: {
+      rotation?: number;
+      tilt?: number;
+      zoom?: number;
+      lighting?: number;
+      shadow?: number;
+      relighting?: boolean;
+    };
   };
 }
 

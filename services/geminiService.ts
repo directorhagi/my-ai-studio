@@ -56,6 +56,40 @@ const optimizeImage = (base64Str: string, maxWidth = 1024): Promise<string> => {
   });
 };
 
+// Detect aspect ratio from base64 image dimensions
+const detectAspectRatio = (base64: string): Promise<AspectRatio> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const w = img.naturalWidth || img.width;
+      const h = img.naturalHeight || img.height;
+      if (!w || !h) { resolve("1:1"); return; }
+      const ratio = w / h;
+      const ratios: { value: AspectRatio; r: number }[] = [
+        { value: "1:1",  r: 1 },
+        { value: "4:3",  r: 4/3 },
+        { value: "16:9", r: 16/9 },
+        { value: "21:9", r: 21/9 },
+        { value: "5:4",  r: 5/4 },
+        { value: "3:2",  r: 3/2 },
+        { value: "2:3",  r: 2/3 },
+        { value: "9:16", r: 9/16 },
+        { value: "3:4",  r: 3/4 },
+        { value: "4:5",  r: 4/5 },
+      ];
+      let closest = ratios[0];
+      let minDiff = Math.abs(ratio - ratios[0].r);
+      for (const entry of ratios) {
+        const diff = Math.abs(ratio - entry.r);
+        if (diff < minDiff) { minDiff = diff; closest = entry; }
+      }
+      resolve(closest.value);
+    };
+    img.onerror = () => resolve("1:1");
+    img.src = base64;
+  });
+};
+
 // --- API Client Setup ---
 
 const getGenAI = () => {
@@ -371,8 +405,9 @@ export const generateEditedImage = async (
 ): Promise<{ imageUrl: string, seed: number }> => {
   const ai = getGenAI();
   const finalSeed = resolveSeed(seed);
+  const detectedAspectRatio = await detectAspectRatio(imageBase64);
   const optimizedBase = await optimizeImage(imageBase64);
-  
+
   const parts: any[] = [
     {
       inlineData: {
@@ -449,8 +484,7 @@ export const generateEditedImage = async (
       config: {
         seed: finalSeed,
         imageConfig: {
-          aspectRatio: aspectRatio,
-          imageSize: "1K"
+          aspectRatio: detectedAspectRatio,
         }
       }
     })) as GenerateContentResponse;
@@ -484,6 +518,7 @@ export const generateInpainting = async (
 ): Promise<{ imageUrl: string, seed: number }> => {
   const ai = getGenAI();
   const finalSeed = resolveSeed(seed);
+  const detectedAspectRatio = await detectAspectRatio(imageBase64);
   const optimizedBase = await optimizeImage(imageBase64);
   const optimizedMask = await optimizeImage(maskBase64); // Mask also needs optimization to match dimensions
 
@@ -547,8 +582,11 @@ export const generateInpainting = async (
     const response = await retryOperation(() => ai.models.generateContent({
       model: modelId || 'gemini-3-pro-image-preview',
       contents: { parts },
-      config: { 
+      config: {
         seed: finalSeed,
+        imageConfig: {
+          aspectRatio: detectedAspectRatio,
+        }
       }
     })) as GenerateContentResponse;
 
