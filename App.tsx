@@ -2530,6 +2530,13 @@ export const App: React.FC = () => {
                                 <div className="hidden md:flex absolute top-4 right-0 bottom-8 w-4 cursor-col-resize z-50 items-center justify-center group hover:bg-indigo-500/5 rounded-r-xl transition-colors" onMouseDown={startResizing}><div className="w-1 h-8 bg-slate-700 rounded-full group-hover:bg-indigo-500 transition-colors"></div></div>
                             </div>
                             <div className="flex-1 flex flex-col min-w-0 bg-transparent relative w-full h-full select-none overflow-hidden" onWheel={handleCanvasContainerWheel} onMouseDown={handleCanvasMouseDown} onMouseMove={handleCanvasMouseMove} onMouseUp={handleCanvasMouseUp} onMouseLeave={handleCanvasMouseUp} style={{ cursor: cursorMode, touchAction: 'none' }}>
+                                {studioState.error && (
+                                    <div className="absolute top-4 left-4 right-4 z-50 p-3 bg-red-500/10 border border-red-500/30 rounded-xl flex items-center gap-3">
+                                        <i className="fas fa-exclamation-triangle text-red-500 text-sm flex-shrink-0"></i>
+                                        <p className="text-xs text-red-300/90 flex-1 min-w-0 whitespace-pre-wrap">{studioState.error}</p>
+                                        <button onClick={() => setStudioState(p => ({...p, error: null}))} className="text-red-400 hover:text-red-200 transition-colors flex-shrink-0"><i className="fas fa-times text-xs"></i></button>
+                                    </div>
+                                )}
                                 <div className="absolute inset-0 z-0 flex items-center justify-center">
                                     {!inpaintBase ? (
                                         <DropZone onFileSelect={(b) => setInpaintBase(b)} label={t.uploadTitle} isDarkMode={true} variant="fullscreen" className="w-full h-full pb-20 !cursor-default" />

@@ -83,38 +83,35 @@ export const binarizeMask = (maskBase64: string): Promise<string> => {
   });
 };
 
-// Compute the minimum fill-scale needed so the transformed image covers
-// the entire canvas without black corners.
-// Transform chain applied to image coords: T → R → Fs → S(shear) → Z
-// For each canvas corner C, inverse maps to image via:
-//   a = R^(-1)(C - translate)
-//   required Fs ≥ |a.x - skew*a.y| / (w/2)  and  |a.y| / (h/2)
-const computeFillScale = (w: number, h: number, rotation: number, tilt: number): number => {
-  const rotRad = rotation * Math.PI / 180;
-  const skew = tilt !== 0 ? Math.tan((tilt * Math.PI) / 180) * 0.3 : 0;
-  // Inverse rotation by -rotRad
-  const cosR = Math.cos(-rotRad);
-  const sinR = Math.sin(-rotRad);
+// Compute fill-scale for two shear transforms (horizontal + vertical).
+// Canvas transform chain: translate → scale(Fs) → shearX → skewY → zoom → draw
+// Inverse mapping for canvas corner (cx,cy):
+//   ty = cy - hh, tx = cx - hw (subtract translation)
+//   iy = ty - skewY*tx (inverse of vertical skew)
+//   ix = tx - shearX*iy (inverse of horizontal shear)
+//   Fs = max(|ix|/hw, |iy|/hh) across all 4 corners
+const computeFillScaleForShears = (w: number, h: number, shearX: number, skewY: number): number => {
   const hw = w / 2, hh = h / 2;
-  // All 4 canvas corners (canvas coords 0→w, 0→h)
   const corners: [number, number][] = [[0, 0], [w, 0], [0, h], [w, h]];
   let maxFs = 1;
   for (const [cx, cy] of corners) {
-    // T^(-1): subtract canvas center
     const tx = cx - hw, ty = cy - hh;
-    // R^(-1): apply inverse rotation
-    const ax = tx * cosR - ty * sinR;
-    const ay = tx * sinR + ty * cosR;
-    // Required Fs so S^(-1)(a/Fs) stays in ±(hw, hh)
-    const fsX = Math.abs(ax - skew * ay) / hw;
-    const fsY = Math.abs(ay) / hh;
-    maxFs = Math.max(maxFs, fsX, fsY);
+    const iy = ty - skewY * tx;
+    const ix = tx - shearX * iy;
+    maxFs = Math.max(maxFs, Math.abs(ix) / hw, Math.abs(iy) / hh);
   }
   return maxFs;
 };
 
-// Apply geometric transforms (rotation, tilt via skew, zoom) directly on canvas.
-// Uses computeFillScale to guarantee zero black corners for any rotation+tilt combo.
+// Apply geometric transforms on canvas before sending to AI.
+//
+// Rotation (left-right) → HORIZONTAL SHEAR: simulates subject turning body.
+//   ctx.rotate() was previously used here — that's a Z-axis spin which looks
+//   exactly like a TILT on portrait images. Replaced with shear.
+//
+// Tilt (up-down) → VERTICAL SHEAR: simulates camera angle changing.
+//
+// Both shears use computeFillScaleForShears to eliminate black corners.
 const applyGeometricTransforms = (
   base64: string,
   rotation: number,
@@ -137,23 +134,26 @@ const applyGeometricTransforms = (
       ctx.save();
       ctx.translate(w / 2, h / 2);
 
-      // Step 1: Rotation
-      if (rotation !== 0) ctx.rotate((rotation * Math.PI) / 180);
+      // Rotation → horizontal shear: x' = x + shearX*y
+      // Capped at ±0.9 to avoid extreme distortion at ±180°
+      const shearX = rotation !== 0 ? Math.max(-0.9, Math.min(0.9, (rotation / 90) * 0.7)) : 0;
 
-      // Step 2: Fill-scale — computed for rotation+tilt combined,
-      // applied between R and S so it compensates both transforms.
-      if (rotation !== 0 || tilt !== 0) {
-        const fs = computeFillScale(w, h, rotation, tilt);
+      // Tilt → vertical shear: y' = y + skewY*x
+      const skewY = tilt !== 0 ? Math.tan((tilt * Math.PI) / 180) * 0.3 : 0;
+
+      // Fill-scale applied first so both shears stay within frame
+      if (shearX !== 0 || skewY !== 0) {
+        const fs = computeFillScaleForShears(w, h, shearX, skewY);
         if (fs > 1) ctx.scale(fs, fs);
       }
 
-      // Step 3: Tilt as vertical skew
-      if (tilt !== 0) {
-        const skew = Math.tan((tilt * Math.PI) / 180) * 0.3;
-        ctx.transform(1, skew, 0, 1, 0, 0);
-      }
+      // Apply horizontal shear (rotation simulation — NOT ctx.rotate)
+      if (shearX !== 0) ctx.transform(1, 0, shearX, 1, 0, 0);
 
-      // Step 4: User zoom (additional, on top of fill-scale)
+      // Apply vertical skew (tilt simulation)
+      if (skewY !== 0) ctx.transform(1, skewY, 0, 1, 0, 0);
+
+      // User zoom
       if (zoom !== 0) {
         const zoomScale = zoom > 0 ? 1 + zoom / 100 : 1 / (1 + Math.abs(zoom) / 100);
         ctx.scale(zoomScale, zoomScale);
@@ -704,12 +704,9 @@ const describeSelectionArea = (maskBase64: string): Promise<string> => {
 };
 
 // --- Main inpainting function ---
-// Strategy: send full original image → Gemini applies change based on text location
-// → client-side compositeMaskResult does pixel-perfect masking.
-//
-// Why NOT crop: Gemini generates images, not in-place edits. A cropped region
-// sent back is misaligned with the original — the compositing breaks.
-// Sending the FULL IMAGE and describing WHERE to change works reliably.
+// Strategy: overlay the mask as a red/pink tint on the original image so Gemini
+// can VISUALLY SEE the selection area. Then ask Gemini to replace that highlighted
+// region. client-side compositeMaskResult does pixel-perfect masking afterward.
 export const generateInpainting = async (
   imageBase64: string,
   maskBase64: string,
@@ -721,15 +718,13 @@ export const generateInpainting = async (
   const ai = getGenAI();
   const finalSeed = resolveSeed(seed);
 
-  // Describe the painted area so Gemini knows WHERE to apply the change
-  const locationDesc = await describeSelectionArea(maskBase64);
-
-  // Full original image (Gemini needs full context to generate a correct full-size output)
-  const optimizedBase = await optimizeImage(imageBase64);
+  // Create masked preview — red/pink overlay shows Gemini exactly WHERE to edit
+  const maskedPreview = await createMaskedPreview(imageBase64, maskBase64);
+  const optimizedMasked = await optimizeImage(maskedPreview);
   const detectedAR = await detectAspectRatio(imageBase64);
 
   const parts: any[] = [
-    { inlineData: { data: optimizedBase.split(',')[1], mimeType: getMimeType(optimizedBase) } }
+    { inlineData: { data: optimizedMasked.split(',')[1], mimeType: getMimeType(optimizedMasked) } }
   ];
 
   for (const ref of refImages) {
@@ -739,20 +734,22 @@ export const generateInpainting = async (
     }
   }
 
-  const instruction = userPrompt?.trim() || 'Enhance and improve the area naturally.';
+  const instruction = userPrompt?.trim() || 'Enhance and improve this area naturally.';
 
-  // The prompt describes WHAT and WHERE. The WHERE must match locationDesc precisely.
-  // compositeMaskResult handles the pixel-level precision — Gemini just needs to apply the change.
-  const prompt = `You are a professional photo retoucher. Edit this photo by applying a targeted change.
+  // The image has a RED/PINK tinted region marking the selection.
+  // Gemini's job: replace that highlighted area with the instruction.
+  // compositeMaskResult will handle pixel-perfect boundary blending afterward.
+  const prompt = `You are a professional photo editor.
 
-TARGET AREA: ${locationDesc}
-CHANGE: "${instruction}"
+In this image, there is a RED/PINK highlighted region (reddish-pink tint overlay).
 
-Rules:
-1. Apply "${instruction}" CLEARLY AND BOLDLY to ${locationDesc}. Do not be subtle — the change must be obvious.
-2. Keep every other part of the photo exactly as it is.
-3. Output the complete photo at the same composition, just with ${locationDesc} modified.
-4. Photorealistic quality. Match the existing lighting and style.${refImages.length > 0 ? '\n5. Use the reference image for visual/style guidance.' : ''}`;
+YOUR TASK: Replace the RED/PINK highlighted area with: "${instruction}"
+
+RULES:
+1. Change ONLY the red/pink highlighted region. Make the change CLEARLY VISIBLE and decisive.
+2. Keep everything OUTSIDE the highlighted area exactly unchanged — same pixels, same lighting.
+3. The result must look photorealistic and seamlessly integrated with the surroundings.
+4. Output the COMPLETE image at the same dimensions and composition.${refImages.length > 0 ? '\n5. Reference image provided — use it for style/visual guidance.' : ''}`;
 
   parts.push({ text: prompt });
 
