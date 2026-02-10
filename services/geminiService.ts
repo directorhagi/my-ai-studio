@@ -103,22 +103,15 @@ const computeFillScaleForShears = (w: number, h: number, shearX: number, skewY: 
   return maxFs;
 };
 
-// Apply geometric transforms on canvas before sending to AI.
-//
-// Rotation (left-right) → HORIZONTAL SHEAR: simulates subject turning body.
-//   ctx.rotate() was previously used here — that's a Z-axis spin which looks
-//   exactly like a TILT on portrait images. Replaced with shear.
-//
-// Tilt (up-down) → VERTICAL SHEAR: simulates camera angle changing.
-//
-// Both shears use computeFillScaleForShears to eliminate black corners.
+// Apply zoom-only canvas transform before sending to AI.
+// Rotation and tilt are handled via text prompt to Gemini (3D perspective
+// cannot be reproduced with 2D canvas transforms — any shear/skew approach
+// causes visible distortion that users perceive as wrong).
 const applyGeometricTransforms = (
   base64: string,
-  rotation: number,
-  tilt: number,
   zoom: number
 ): Promise<string> => {
-  if (rotation === 0 && tilt === 0 && zoom === 0) return Promise.resolve(base64);
+  if (zoom === 0) return Promise.resolve(base64);
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
@@ -129,36 +122,10 @@ const applyGeometricTransforms = (
       canvas.height = h;
       const ctx = canvas.getContext('2d');
       if (!ctx) { resolve(base64); return; }
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, w, h);
       ctx.save();
       ctx.translate(w / 2, h / 2);
-
-      // Rotation → horizontal shear: x' = x + shearX*y
-      // Capped at ±0.9 to avoid extreme distortion at ±180°
-      const shearX = rotation !== 0 ? Math.max(-0.9, Math.min(0.9, (rotation / 90) * 0.7)) : 0;
-
-      // Tilt → vertical shear: y' = y + skewY*x
-      const skewY = tilt !== 0 ? Math.tan((tilt * Math.PI) / 180) * 0.3 : 0;
-
-      // Fill-scale applied first so both shears stay within frame
-      if (shearX !== 0 || skewY !== 0) {
-        const fs = computeFillScaleForShears(w, h, shearX, skewY);
-        if (fs > 1) ctx.scale(fs, fs);
-      }
-
-      // Apply horizontal shear (rotation simulation — NOT ctx.rotate)
-      if (shearX !== 0) ctx.transform(1, 0, shearX, 1, 0, 0);
-
-      // Apply vertical skew (tilt simulation)
-      if (skewY !== 0) ctx.transform(1, skewY, 0, 1, 0, 0);
-
-      // User zoom
-      if (zoom !== 0) {
-        const zoomScale = zoom > 0 ? 1 + zoom / 100 : 1 / (1 + Math.abs(zoom) / 100);
-        ctx.scale(zoomScale, zoomScale);
-      }
-
+      const zoomScale = zoom > 0 ? 1 + zoom / 100 : 1 / (1 + Math.abs(zoom) / 100);
+      ctx.scale(zoomScale, zoomScale);
       ctx.drawImage(img, -w / 2, -h / 2, w, h);
       ctx.restore();
       resolve(canvas.toDataURL('image/png'));
@@ -570,8 +537,8 @@ export const generateEditedImage = async (
   const ai = getGenAI();
   const finalSeed = resolveSeed(seed);
   const detectedAspectRatio = await detectAspectRatio(imageBase64);
-  // Apply geometric transforms (rotation/tilt/zoom) directly — guaranteed to be visible
-  const transformedBase = await applyGeometricTransforms(imageBase64, params.rotation, params.tilt, params.zoom);
+  // Only zoom is applied via canvas. Rotation/tilt go to the AI prompt.
+  const transformedBase = await applyGeometricTransforms(imageBase64, params.zoom);
   const optimizedBase = await optimizeImage(transformedBase);
 
   const parts: any[] = [
@@ -601,34 +568,50 @@ export const generateEditedImage = async (
     }
   }
 
-  // Geometric transforms (rotation/tilt/zoom) already applied to image directly above.
-  // AI prompt only handles appearance changes: lighting, shadows, relighting, user instruction.
   const lightingDesc = params.lighting < 30 ? "Low-key, very dark and moody" : params.lighting > 70 ? "High-key, bright and airy commercial" : "Balanced neutral studio";
   const shadowDesc = params.shadow < 30 ? "Extremely soft and diffused, almost shadowless" : params.shadow > 70 ? "Hard, dramatic, high-contrast shadows" : "Natural soft shadows";
 
+  // Build rotation/tilt instructions for Gemini (3D perspective — can't be done in 2D canvas)
+  let rotationInstruction = '';
+  if (params.rotation !== 0) {
+    const deg = Math.abs(params.rotation);
+    const dir = params.rotation > 0 ? 'right' : 'left';
+    if (deg <= 15) rotationInstruction = `- ROTATION: Subtly turn the subject slightly to their ${dir}. Show a very slight ${dir}-side perspective (about ${deg}°).`;
+    else if (deg <= 45) rotationInstruction = `- ROTATION: Turn the subject to face ${deg === 90 ? 'directly to the side' : `their ${dir}`}. Show a clear ${dir}-side 3/4 view (about ${deg}°). The face and body should show perspective foreshortening.`;
+    else rotationInstruction = `- ROTATION: Turn the subject strongly to their ${dir} (about ${deg}°). Show a ${deg >= 90 ? 'profile or near-profile' : `strong ${dir}`} view with realistic 3D perspective.`;
+  }
+  let tiltInstruction = '';
+  if (params.tilt !== 0) {
+    const deg = Math.abs(params.tilt);
+    const dir = params.tilt > 0 ? 'upward' : 'downward';
+    tiltInstruction = `- TILT: Tilt the camera angle ${dir} by about ${deg}°. ${params.tilt > 0 ? 'View the subject from slightly below (low-angle shot).' : 'View the subject from slightly above (high-angle shot).'}`;
+  }
+
   const lightingChanged = params.lighting !== 50;
   const shadowChanged = params.shadow !== 50;
-  const hasAppearanceChanges = lightingChanged || shadowChanged || params.relighting || userPrompt.trim();
+  const hasChanges = lightingChanged || shadowChanged || params.relighting || params.rotation !== 0 || params.tilt !== 0 || userPrompt.trim();
 
   const prompt = `
-    [ROLE: PROFESSIONAL PHOTO EDITOR & RETOUCHER]
+    [ROLE: PROFESSIONAL FASHION PHOTO EDITOR]
 
-    TASK: Retouch the provided image by applying the following APPEARANCE adjustments. The perspective/zoom have already been set in the image itself — focus only on lighting, shadows, and the user instruction.
+    TASK: Edit the provided fashion photo by applying ALL of the following adjustments.
 
     INPUT MAPPING:
     ${inputMap}
 
-    APPEARANCE ADJUSTMENTS TO APPLY:
-    ${lightingChanged ? `- LIGHTING: Change to ${lightingDesc} lighting (${params.lighting}/100). This must be VISIBLY different from a standard 50/100 lighting.` : '- LIGHTING: Keep current lighting (no change).'}
-    ${shadowChanged ? `- SHADOWS: Change to ${shadowDesc} (${params.shadow}/100). This must be CLEARLY visible in the output.` : '- SHADOWS: Keep current shadow style (no change).'}
-    ${params.relighting ? '- RELIGHTING: Apply professional 3-point studio relighting. Add dimensionality and subject separation from background.' : ''}
-    ${userPrompt.trim() ? `- USER REQUEST: "${userPrompt}" — Apply EXACTLY as described. This is the highest priority instruction.` : ''}
+    ADJUSTMENTS TO APPLY:
+    ${rotationInstruction || '- ROTATION: No rotation change.'}
+    ${tiltInstruction || '- TILT: No camera tilt change.'}
+    ${lightingChanged ? `- LIGHTING: Change to ${lightingDesc} (${params.lighting}/100). Must be clearly visible.` : '- LIGHTING: Keep current lighting.'}
+    ${shadowChanged ? `- SHADOWS: Change to ${shadowDesc} (${params.shadow}/100). Must be clearly visible.` : '- SHADOWS: Keep current shadows.'}
+    ${params.relighting ? '- RELIGHTING: Apply professional 3-point studio relighting with subject separation.' : ''}
+    ${userPrompt.trim() ? `- USER REQUEST (HIGHEST PRIORITY): "${userPrompt}" — Apply EXACTLY and CLEARLY as described.` : ''}
 
     REQUIREMENTS:
-    - ${hasAppearanceChanges ? 'Output MUST visibly reflect the adjustments above. Do not be subtle — make changes clear and confident.' : 'Output should be a high-quality, clean version of the input with no changes.'}
-    - Preserve subject identity, clothing, and all structural details.
-    - Photorealistic result — no artifacts, no cut-out look, seamless lighting.
-    - Output the FULL image at the same composition as input.
+    - ${hasChanges ? 'ALL adjustments above MUST be visibly reflected. Be decisive and clear — do not be subtle.' : 'Output a clean, high-quality version of the input.'}
+    - Preserve subject identity and clothing design.
+    - Photorealistic output — no artifacts, seamless integration.
+    - Output the COMPLETE image.
   `;
 
   parts.push({ text: prompt });

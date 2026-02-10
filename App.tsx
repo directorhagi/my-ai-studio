@@ -1871,19 +1871,48 @@ export const App: React.FC = () => {
     const runInpaint = async () => {
         if (isInpainting || !inpaintBase || !canvasRef.current) return;
         if (!await checkApiKey()) return;
+        // Clear previous error
+        setStudioState(prev => ({ ...prev, error: null }));
         setIsInpainting(true);
         try {
             const seedToUse = studioState.useRandomSeed ? undefined : studioState.seed;
             const rawMask = canvasRef.current.toDataURL('image/png');
-            // Binarize mask for both API call (inside generateInpainting) and compositing
             const binMask = await binarizeMask(rawMask);
+
+            // Check if user has actually painted something
+            const hasStroke = await ((): Promise<boolean> => {
+                return new Promise(res => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const c = document.createElement('canvas');
+                        c.width = img.width; c.height = img.height;
+                        const cx = c.getContext('2d');
+                        if (!cx) { res(false); return; }
+                        cx.drawImage(img, 0, 0);
+                        const d = cx.getImageData(0, 0, c.width, c.height).data;
+                        for (let i = 0; i < d.length; i += 4) {
+                            if (d[i] > 128) { res(true); return; }
+                        }
+                        res(false);
+                    };
+                    img.onerror = () => res(false);
+                    img.src = binMask;
+                });
+            })();
+
+            if (!hasStroke) {
+                setStudioState(prev => ({ ...prev, error: '먼저 편집할 영역을 브러시로 그려주세요.' }));
+                return;
+            }
+
             const result = await generateInpainting(inpaintBase, binMask, inpaintPrompt, inpaintRefImages, studioState.selectedModel, seedToUse);
-            // Composite result with original — preserves all non-masked pixels exactly
-            const composited = await compositeMaskResult(inpaintBase, result.imageUrl, binMask);
-            setInpaintResult(composited);
+            // Use Gemini's full output directly — compositing was causing visible seams
+            // because Gemini generates a new image (slight pose variation) making
+            // pixel-level blending look wrong at mask boundaries.
+            setInpaintResult(result.imageUrl);
 
             const newItem: HistoryItem = {
-                id: Date.now().toString(), url: composited, date: Date.now(), type: 'INPAINTING', liked: false,
+                id: Date.now().toString(), url: result.imageUrl, date: Date.now(), type: 'INPAINTING', liked: false,
                 metadata: {
                     prompt: inpaintPrompt,
                     refImages: inpaintRefImages,
