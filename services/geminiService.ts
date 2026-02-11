@@ -593,11 +593,10 @@ Preserve identity and clothing. Output the complete image.`;
   }
 };
 
-// --- Mask-based inpainting with crop+composite approach ---
-// 1. Find mask bounding box
-// 2. Crop that region with padding
-// 3. Send cropped region to Gemini
-// 4. Composite result back using mask as alpha
+// --- Mask-based inpainting with full image + position description ---
+// 1. Analyze mask position in the image
+// 2. Send FULL image with position description to Gemini
+// 3. Let Gemini edit with full context
 export const generateMaskedInpaint = async (
   originalBase64: string,
   maskBase64: string, // White = area to edit, Black = keep
@@ -609,7 +608,7 @@ export const generateMaskedInpaint = async (
   const ai = getGenAI();
   const finalSeed = resolveSeed(seed);
 
-  // Helper: Load image as ImageData
+  // Helper: Load image dimensions and mask data
   const loadImageData = (base64: string): Promise<{ data: ImageData, width: number, height: number }> => {
     return new Promise((resolve) => {
       const img = new Image();
@@ -625,8 +624,11 @@ export const generateMaskedInpaint = async (
     });
   };
 
-  // Find bounding box of white pixels in mask
-  const findMaskBounds = (maskData: ImageData): { x: number, y: number, w: number, h: number } | null => {
+  // Find bounding box and analyze position
+  const analyzeMask = (maskData: ImageData): {
+    bounds: { x: number, y: number, w: number, h: number } | null,
+    position: string
+  } => {
     const { data, width, height } = maskData;
     let minX = width, minY = height, maxX = 0, maxY = 0;
     let hasMask = false;
@@ -634,7 +636,6 @@ export const generateMaskedInpaint = async (
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const idx = (y * width + x) * 4;
-        // Check if pixel is white (or close to white) - mask area
         if (data[idx] > 128 || data[idx + 1] > 128 || data[idx + 2] > 128) {
           hasMask = true;
           minX = Math.min(minX, x);
@@ -645,52 +646,52 @@ export const generateMaskedInpaint = async (
       }
     }
 
-    if (!hasMask) return null;
-    return { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+    if (!hasMask) return { bounds: null, position: '' };
+
+    const bounds = { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+
+    // Calculate center of mask as percentage
+    const centerX = (minX + maxX) / 2 / width;
+    const centerY = (minY + maxY) / 2 / height;
+
+    // Describe position in natural language
+    let vertPos = centerY < 0.33 ? 'top' : centerY > 0.66 ? 'bottom' : 'middle';
+    let horzPos = centerX < 0.33 ? 'left' : centerX > 0.66 ? 'right' : 'center';
+
+    // More specific descriptions
+    let position = '';
+    if (vertPos === 'bottom' && (horzPos === 'left' || horzPos === 'center' || horzPos === 'right')) {
+      position = `at the ${vertPos} ${horzPos === 'center' ? 'center' : horzPos} of the image (approximately ${Math.round(centerY * 100)}% down from top)`;
+    } else {
+      position = `in the ${vertPos} ${horzPos} area of the image`;
+    }
+
+    // Add size context
+    const sizePercent = (bounds.w * bounds.h) / (width * height) * 100;
+    if (sizePercent < 5) {
+      position += ' (small area)';
+    } else if (sizePercent > 20) {
+      position += ' (large area)';
+    }
+
+    return { bounds, position };
   };
 
-  // Load original and mask
-  const [original, mask] = await Promise.all([
-    loadImageData(originalBase64),
-    loadImageData(maskBase64)
-  ]);
+  // Load mask and analyze
+  const mask = await loadImageData(maskBase64);
+  const { bounds, position } = analyzeMask(mask.data);
 
-  // Find mask bounds
-  const bounds = findMaskBounds(mask.data);
   if (!bounds) {
     throw new Error('마스크 영역이 없습니다. 편집할 영역을 브러시로 칠해주세요.');
   }
 
-  // Add padding around the bounds (30% of the crop size, min 50px)
-  const padX = Math.max(50, Math.round(bounds.w * 0.3));
-  const padY = Math.max(50, Math.round(bounds.h * 0.3));
+  // Get original image aspect ratio
+  const detectedAR = await detectAspectRatio(originalBase64);
 
-  const cropX = Math.max(0, bounds.x - padX);
-  const cropY = Math.max(0, bounds.y - padY);
-  const cropW = Math.min(original.width - cropX, bounds.w + padX * 2);
-  const cropH = Math.min(original.height - cropY, bounds.h + padY * 2);
-
-  // Crop the region from original image
-  const cropCanvas = document.createElement('canvas');
-  cropCanvas.width = cropW;
-  cropCanvas.height = cropH;
-  const cropCtx = cropCanvas.getContext('2d')!;
-
-  const origImg = new Image();
-  await new Promise<void>((resolve) => {
-    origImg.onload = () => resolve();
-    origImg.src = originalBase64;
-  });
-  cropCtx.drawImage(origImg, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-  const croppedBase64 = cropCanvas.toDataURL('image/png');
-
-  // Detect aspect ratio of cropped region
-  const cropAR = cropW > cropH * 1.2 ? "16:9" : cropH > cropW * 1.2 ? "9:16" : "1:1";
-
-  // Prepare parts for Gemini
-  const optimizedCrop = await optimizeImage(croppedBase64, 1024);
+  // Prepare full image for Gemini
+  const optimizedOriginal = await optimizeImage(originalBase64);
   const parts: any[] = [
-    { inlineData: { data: optimizedCrop.split(',')[1], mimeType: getMimeType(optimizedCrop) } }
+    { inlineData: { data: optimizedOriginal.split(',')[1], mimeType: getMimeType(optimizedOriginal) } }
   ];
 
   for (const ref of refImages) {
@@ -700,92 +701,50 @@ export const generateMaskedInpaint = async (
     }
   }
 
-  const instruction = editPrompt?.trim() || 'Edit this region';
-  const prompt = `Edit this cropped region of a fashion photo.
+  const instruction = editPrompt?.trim() || 'Edit this area';
+
+  // Create detailed prompt with position information
+  const prompt = `Edit this fashion photo.
 
 TASK: ${instruction}
 
-IMPORTANT:
-- This is a CROPPED portion of a larger image
-- Apply the change to the MAIN SUBJECT in this crop
-- Maintain the same angle, lighting, and style
-- Output the edited version at the same size`;
+LOCATION: The area to edit is located ${position}.
+
+CRITICAL RULES:
+1. ONLY modify the specified area - keep EVERYTHING else exactly the same
+2. The edited item must be in the EXACT SAME POSITION as the original
+3. Match the lighting, angle, and perspective of the original
+4. Preserve the person's pose and all other elements
+5. Output the complete edited photo`;
 
   parts.push({ text: prompt });
 
-  // Call Gemini
-  const response = await retryOperation(() => ai.models.generateContent({
-    model: modelId || 'gemini-3-pro-image-preview',
-    contents: { parts },
-    config: { seed: finalSeed, imageConfig: { aspectRatio: cropAR as any } }
-  })) as GenerateContentResponse;
+  // Call Gemini with full image
+  try {
+    const response = await retryOperation(() => ai.models.generateContent({
+      model: modelId || 'gemini-3-pro-image-preview',
+      contents: { parts },
+      config: { seed: finalSeed, imageConfig: { aspectRatio: detectedAR } }
+    })) as GenerateContentResponse;
 
-  let editedCropBase64 = '';
-  const candidate = response.candidates?.[0];
-  if (candidate?.content?.parts) {
-    for (const part of candidate.content.parts) {
-      if (part.inlineData) {
-        editedCropBase64 = `data:image/png;base64,${part.inlineData.data}`;
-        break;
+    let resultBase64 = '';
+    const candidate = response.candidates?.[0];
+    if (candidate?.content?.parts) {
+      for (const part of candidate.content.parts) {
+        if (part.inlineData) {
+          resultBase64 = `data:image/png;base64,${part.inlineData.data}`;
+          break;
+        }
       }
     }
+
+    if (!resultBase64) throw new Error('AI가 편집된 이미지를 생성하지 못했습니다.');
+    return { imageUrl: resultBase64, seed: finalSeed };
+
+  } catch (error: any) {
+    console.error('Gemini Inpaint Error:', error);
+    throw error;
   }
-
-  if (!editedCropBase64) throw new Error('AI가 편집된 이미지를 생성하지 못했습니다.');
-
-  // Now composite: paste edited crop back onto original using mask as alpha
-  const finalCanvas = document.createElement('canvas');
-  finalCanvas.width = original.width;
-  finalCanvas.height = original.height;
-  const finalCtx = finalCanvas.getContext('2d')!;
-
-  // Draw original
-  finalCtx.drawImage(origImg, 0, 0);
-
-  // Load edited crop
-  const editedImg = new Image();
-  await new Promise<void>((resolve) => {
-    editedImg.onload = () => resolve();
-    editedImg.src = editedCropBase64;
-  });
-
-  // Create a temporary canvas for the edited region with mask alpha
-  const tempCanvas = document.createElement('canvas');
-  tempCanvas.width = cropW;
-  tempCanvas.height = cropH;
-  const tempCtx = tempCanvas.getContext('2d')!;
-
-  // Draw the edited image scaled to crop size
-  tempCtx.drawImage(editedImg, 0, 0, cropW, cropH);
-
-  // Get pixel data
-  const tempData = tempCtx.getImageData(0, 0, cropW, cropH);
-  const maskImg = new Image();
-  await new Promise<void>((resolve) => {
-    maskImg.onload = () => resolve();
-    maskImg.src = maskBase64;
-  });
-
-  // Get mask data for the crop region
-  const maskCanvas = document.createElement('canvas');
-  maskCanvas.width = cropW;
-  maskCanvas.height = cropH;
-  const maskCtx = maskCanvas.getContext('2d')!;
-  maskCtx.drawImage(maskImg, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-  const cropMaskData = maskCtx.getImageData(0, 0, cropW, cropH);
-
-  // Apply mask as alpha with feathering
-  for (let i = 0; i < tempData.data.length; i += 4) {
-    // Use mask brightness as alpha (white = full replacement)
-    const maskAlpha = Math.max(cropMaskData.data[i], cropMaskData.data[i + 1], cropMaskData.data[i + 2]) / 255;
-    tempData.data[i + 3] = Math.round(maskAlpha * 255);
-  }
-  tempCtx.putImageData(tempData, 0, 0);
-
-  // Draw the masked edited region onto final
-  finalCtx.drawImage(tempCanvas, cropX, cropY);
-
-  return { imageUrl: finalCanvas.toDataURL('image/png'), seed: finalSeed };
 };
 
 // --- Simple text-based image editing (for when no mask is used) ---

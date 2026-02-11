@@ -2497,6 +2497,14 @@ export const App: React.FC = () => {
                                             </div>
                                             <input type="range" min="10" max="100" value={brushOpacity} onChange={e => setBrushOpacity(parseInt(e.target.value))} className="w-full accent-pink-500" />
                                         </div>
+                                        {/* Brush Hardness */}
+                                        <div className="mb-4">
+                                            <div className="flex items-center justify-between mb-1.5">
+                                                <label className="text-[9px] font-bold uppercase text-slate-500">Hardness</label>
+                                                <span className="text-[9px] font-mono text-pink-400">{brushHardness}%</span>
+                                            </div>
+                                            <input type="range" min="0" max="100" value={brushHardness} onChange={e => setBrushHardness(parseInt(e.target.value))} className="w-full accent-pink-500" />
+                                        </div>
                                         {/* Tool Selection */}
                                         <div className="mb-4">
                                             <label className="text-[9px] font-bold uppercase text-slate-500 block mb-2">Tool</label>
@@ -2508,6 +2516,12 @@ export const App: React.FC = () => {
                                                     <i className="fas fa-eraser mr-1"></i> Eraser
                                                 </button>
                                             </div>
+                                            <button
+                                                onClick={() => setInpaintTool('fill')}
+                                                className={`w-full mt-2 py-2 rounded-lg text-[10px] font-bold transition-all ${inpaintTool === 'fill' ? 'bg-pink-600 text-white' : 'bg-white/5 text-slate-400 hover:bg-white/10'}`}
+                                            >
+                                                <i className="fas fa-fill-drip mr-1"></i> Fill (Paint Bucket)
+                                            </button>
                                         </div>
                                         {/* Undo/Redo */}
                                         <div className="mb-4">
